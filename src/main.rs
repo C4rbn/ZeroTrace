@@ -37,7 +37,10 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
-    ctrlc::set_handler(move || { r.store(false, Ordering::SeqCst); })?;
+    
+    ctrlc::set_handler(move || { 
+        r.store(false, Ordering::SeqCst); 
+    })?;
 
     let mut interfaces = Vec::new();
     if let Ok(addrs) = getifaddrs() {
@@ -86,7 +89,6 @@ async fn main() -> Result<(), anyhow::Error> {
                 for i in 0..events.read {
                     if buffers[i].len() < std::mem::size_of::<PacketInfo>() { continue; }
                     let info = unsafe { &*(buffers[i].as_ptr() as *const PacketInfo) };
-                    
                     let dst_ip = Ipv4Addr::from(info.fast_host_dst_addr());
                     
                     let engine_task = engine_local.clone();
@@ -96,19 +98,24 @@ async fn main() -> Result<(), anyhow::Error> {
                         let _ = engine_task.dispatch_stealth_sequence(dst_ip, &h_clone);
                     });
 
-                    if !quiet {
-                        println!("[\x1b[35mBYPASS\x1b[0m] Found Target: {} | Sequence Dispatched", dst_ip);
-                    }
+                    // Clean, non-noisy bypass logging
+                    engine::log_event("BYPASS", &format!("Target Identified: {}", dst_ip), quiet);
                 }
             }
         });
     }
 
-    while running.load(Ordering::SeqCst) { sleep(Duration::from_millis(200)).await; }
+    // Wait for the exit signal
+    while running.load(Ordering::SeqCst) { 
+        sleep(Duration::from_millis(100)).await; 
+    }
+
+    engine::log_event("EXIT", "Detaching BPF programs and cleaning interfaces...", false);
 
     for iface in interfaces {
         let _ = Command::new("ip").args(["link", "set", "dev", &iface, "xdp", "off"]).output();
     }
 
-    Ok(())
+    // Force exit to ensure all background tasks are killed
+    std::process::exit(0);
 }
