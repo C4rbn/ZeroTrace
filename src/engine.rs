@@ -11,27 +11,22 @@ use crate::header_shuffle;
 use crate::tls_grease;
 
 pub struct StealthEngine {
-    pub target_ip: Option<Ipv4Addr>,
-    pub target_port: u16,
     pub target_domain: String,
     pub base_delay_ns: u64,
 }
 
 impl StealthEngine {
-    pub fn new(target: Option<&str>, port: u16, domain: &str, base_delay_ns: u64) -> Self {
+    pub fn new(domain: &str, base_delay_ns: u64) -> Self {
         Self {
-            target_ip: target.and_then(|t| t.parse().ok()),
-            target_port: port,
             target_domain: domain.to_string(),
             base_delay_ns,
         }
     }
 
-    pub fn dispatch_stealth_packet(&self, raw_headers: &HashMap<&[u8], &[u8]>) -> Result<()> {
+    pub fn dispatch_stealth_sequence(&self, dynamic_ip: Ipv4Addr, raw_headers: &HashMap<&[u8], &[u8]>) -> Result<()> {
         let shuffled = header_shuffle::shuffle_headers(raw_headers);
-        let payload = header_shuffle::serialize_headers(&shuffled);
+        let _payload = header_shuffle::serialize_headers(&shuffled);
         
-        // No longer hardcoded to google.com
         tls_grease::execute_stealth_request(&self.target_domain);
 
         let chaos_seed = rand::thread_rng().gen_range(0..4096);
@@ -39,22 +34,17 @@ impl StealthEngine {
 
         sleep(Duration::from_nanos(target_delay));
 
-        if let Some(ip) = self.target_ip {
-            let packet_cfg = tcp_syn_crafter::Config {
-                src_ip: [0, 0, 0, 0],
-                dst_ip: ip.octets(),
-                dport: self.target_port,
-                window: 64240,
-            };
-            
-            let packet = tcp_syn_crafter::create_syn_packet(&packet_cfg);
-            
-            // Payload is now logically part of the dispatch
-            let _ready_payload = payload; 
+        let packet_cfg = tcp_syn_crafter::Config {
+            src_ip: [0, 0, 0, 0],
+            dst_ip: dynamic_ip.octets(),
+            dport: 443,
+            window: 64240,
+        };
+        
+        let packet = tcp_syn_crafter::create_syn_packet(&packet_cfg);
 
-            tcp_syn_crafter::send_raw_packet(ip.octets(), &packet)
-                .map_err(|e| anyhow!("Raw Socket Error: {}", e))?;
-        }
+        tcp_syn_crafter::send_raw_packet(dynamic_ip.octets(), &packet)
+            .map_err(|e| anyhow!("Global Dispatch Error: {}", e))?;
 
         Ok(())
     }
@@ -66,7 +56,6 @@ pub fn log_event(event_type: &str, message: &str, quiet: bool) {
     }
     
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-
     let colored_event = match event_type {
         "BOOT" => event_type.cyan(),
         "SHIELD" => event_type.green(),
@@ -77,11 +66,5 @@ pub fn log_event(event_type: &str, message: &str, quiet: bool) {
         _ => event_type.normal(),
     };
 
-    println!(
-        "[{}.{:03}] [{:<8}] {}", 
-        now.as_secs(), 
-        now.subsec_millis(),
-        colored_event,
-        message
-    );
+    println!("[{}.{:03}] [{:<8}] {}", now.as_secs(), now.subsec_millis(), colored_event, message);
 }
