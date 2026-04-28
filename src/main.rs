@@ -25,6 +25,8 @@ use xdp_interceptor::PacketInfo;
 struct Cli {
     #[arg(short, long)]
     quiet: bool,
+    #[arg(short, long, default_value = "8.8.8.8")]
+    target: String,
     #[arg(short, long)]
     remove: bool,
 }
@@ -44,9 +46,10 @@ async fn main() -> Result<(), anyhow::Error> {
     let mut interfaces = Vec::new();
     if let Ok(addrs) = getifaddrs() {
         for ifaddr in addrs {
-            if let Some(name) = ifaddr.interface_name.get(..).map(|s| s.to_string()) {
-                let is_valid = name.starts_with("eth") || name.starts_with("en") || name.starts_with("wl");
-                if is_valid && !interfaces.contains(&name) {
+            let name = ifaddr.interface_name;
+            // Robust check: skip loopback and interfaces without an address
+            if !ifaddr.flags.contains(nix::net::ifreq::InterfaceFlags::IFF_LOOPBACK) && ifaddr.address.is_some() {
+                if !interfaces.contains(&name) {
                     interfaces.push(name.clone());
                     let _ = Command::new("ip").args(["link", "set", "dev", &name, "xdp", "off"]).output();
                 }
@@ -61,13 +64,14 @@ async fn main() -> Result<(), anyhow::Error> {
 
     engine::log_event("BOOT", "ZeroTrace Active: Universal Portable Mode", args.quiet);
 
-    // --- ORCHESTRATION FIX ---
-    let engine = Arc::new(engine::StealthEngine::new(Some("8.8.8.8"), 443, 500_000));
+    // --- CONFIGURATION REFACTOR ---
+    let engine = Arc::new(engine::StealthEngine::new(Some(&args.target), 443, "google.com", 500_000));
     let engine_task = engine.clone();
     
     tokio::task::spawn_blocking(move || {
         let mut headers = HashMap::new();
         headers.insert(b"User-Agent".as_slice(), b"Mozilla/5.0 (Windows NT 10.0; Win64; x64)".as_slice());
+        headers.insert(b"Accept".as_slice(), b"text/html,application/xhtml+xml".as_slice());
         
         if let Err(e) = engine_task.dispatch_stealth_packet(&headers) {
             engine::log_event("CRITICAL", &format!("Engine Dispatch Error: {}", e), false);
@@ -94,6 +98,9 @@ async fn main() -> Result<(), anyhow::Error> {
             let mut buffers = (0..10).map(|_| BytesMut::with_capacity(64)).collect::<Vec<_>>();
             while let Ok(events) = buf.read_events(&mut buffers).await {
                 for i in 0..events.read {
+                    // RESTORED SAFETY CHECK: Verify buffer length before casting to PacketInfo
+                    if buffers[i].len() < std::mem::size_of::<PacketInfo>() { continue; }
+                    
                     let info = unsafe { &*(buffers[i].as_ptr() as *const PacketInfo) };
                     if !quiet {
                         println!("[\x1b[35mBYPASS\x1b[0m] {} -> {} | Mutated", 
