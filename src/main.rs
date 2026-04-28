@@ -17,6 +17,7 @@ use aya::maps::perf::AsyncPerfEventArray;
 use aya::util::online_cpus;
 use bytes::BytesMut;
 use nix::ifaddrs::getifaddrs;
+use nix::net::ifreq::InterfaceFlags;
 
 use xdp_interceptor::PacketInfo;
 
@@ -42,7 +43,7 @@ async fn main() -> Result<(), anyhow::Error> {
     if let Ok(addrs) = getifaddrs() {
         for ifaddr in addrs {
             let name = ifaddr.interface_name;
-            if !ifaddr.flags.contains(nix::net::ifreq::InterfaceFlags::IFF_LOOPBACK) && ifaddr.address.is_some() {
+            if !ifaddr.flags.contains(InterfaceFlags::IFF_LOOPBACK) && ifaddr.address.is_some() {
                 if !interfaces.contains(&name) {
                     interfaces.push(name.clone());
                     let _ = Command::new("ip").args(["link", "set", "dev", &name, "xdp", "off"]).output();
@@ -58,7 +59,6 @@ async fn main() -> Result<(), anyhow::Error> {
 
     engine::log_event("BOOT", "ZeroTrace Active: Universal Global Mode", args.quiet);
 
-    // Initializing Global Orchestrator
     let engine = Arc::new(engine::StealthEngine::new("google.com", 500_000));
 
     let mut bpf = Ebpf::load(include_bytes_aligned!("../target/bpfel-unknown-none/release/xdp-interceptor"))?;
@@ -69,7 +69,7 @@ async fn main() -> Result<(), anyhow::Error> {
         let _ = program.attach(&iface, XdpFlags::SKB_MODE);
     }
 
-    let cpus = online_cpus()?;
+    let cpus = online_cpus().map_err(|e| anyhow::anyhow!("Failed to list CPUs: {:?}", e))?;
     let mut perf_array = AsyncPerfEventArray::try_from(bpf.take_map("PACKET_EVENTS").unwrap())?;
 
     for cpu_id in cpus {
@@ -89,7 +89,6 @@ async fn main() -> Result<(), anyhow::Error> {
                     
                     let dst_ip = Ipv4Addr::from(info.fast_host_dst_addr());
                     
-                    // DYNAMIC TARGET PICKUP: Pick up the destination from the kernel event
                     let engine_task = engine_local.clone();
                     let h_clone = headers.clone();
                     
