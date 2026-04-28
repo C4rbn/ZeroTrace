@@ -3,16 +3,16 @@ use std::ptr::addr_of;
 use std::sync::atomic::{AtomicI32, Ordering};
 use rand::Rng;
 
-extern "C" {
+unsafe extern "C" {
     fn socket(domain: i32, ty: i32, protocol: i32) -> i32;
     fn setsockopt(fd: i32, level: i32, optname: i32, optval: *const i32, optlen: u32) -> i32;
     fn sendto(
-        fd: i32, 
-        buf: *const u8, 
-        len: usize, 
-        flags: i32, 
-        addr: *const SockAddrIn, 
-        len_a: u32
+        fd: i32,
+        buf: *const u8,
+        len: usize,
+        flags: i32,
+        addr: *const SockAddrIn,
+        len_a: u32,
     ) -> isize;
 }
 
@@ -105,8 +105,8 @@ pub fn internet_checksum(data: &[u8]) -> u16 {
 
 pub fn create_syn_packet(cfg: &Config) -> Vec<u8> {
     let mut rng = rand::thread_rng();
-    let seq_num = rng.gen::<u32>();
-    let src_port = rng.gen_range(49152..65535);
+    let seq_num = rng.r#gen::<u32>();
+    let src_port: u16 = rng.gen_range(49152..65535);
 
     let mut tcp_header = TcpHeader {
         sport: src_port.to_be(),
@@ -135,14 +135,14 @@ pub fn create_syn_packet(cfg: &Config) -> Vec<u8> {
     tcp_checksum_data.extend_from_slice(unsafe {
         std::slice::from_raw_parts(addr_of!(tcp_header) as *const u8, mem::size_of::<TcpHeader>())
     });
-    
+
     tcp_header.csum = internet_checksum(&tcp_checksum_data).to_be();
 
     let mut ip_header = Ipv4Header {
         v_ihl: 0x45,
         tos: 0,
         len: (40u16).to_be(),
-        id: rng.gen::<u16>().to_be(),
+        id: rng.r#gen::<u16>().to_be(),
         off: 0x4000u16.to_be(),
         ttl: 64,
         pro: IPPROTO_TCP as u8,
@@ -153,7 +153,8 @@ pub fn create_syn_packet(cfg: &Config) -> Vec<u8> {
 
     ip_header.csum = internet_checksum(unsafe {
         std::slice::from_raw_parts(addr_of!(ip_header) as *const u8, 20)
-    }).to_be();
+    })
+    .to_be();
 
     let mut packet = Vec::with_capacity(40);
     packet.extend_from_slice(unsafe {
@@ -168,7 +169,7 @@ pub fn create_syn_packet(cfg: &Config) -> Vec<u8> {
 
 pub fn send_raw_packet(dst_ip: [u8; 4], packet: &[u8]) -> Result<(), std::io::Error> {
     let mut fd = SOCKET_FD.load(Ordering::Relaxed);
-    
+
     if fd == -1 {
         unsafe {
             fd = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
@@ -178,9 +179,9 @@ pub fn send_raw_packet(dst_ip: [u8; 4], packet: &[u8]) -> Result<(), std::io::Er
             let on: i32 = 1;
             setsockopt(fd, IPPROTO_IP, IP_HDRINCL, &on, 4);
         }
-        
+
         match SOCKET_FD.compare_exchange(-1, fd, Ordering::SeqCst, Ordering::SeqCst) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(existing_fd) => {
                 unsafe { libc::close(fd) };
                 fd = existing_fd;
@@ -195,16 +196,7 @@ pub fn send_raw_packet(dst_ip: [u8; 4], packet: &[u8]) -> Result<(), std::io::Er
         zero: [0; 8],
     };
 
-    let res = unsafe {
-        sendto(
-            fd,
-            packet.as_ptr(),
-            packet.len(),
-            0,
-            &addr,
-            16,
-        )
-    };
+    let res = unsafe { sendto(fd, packet.as_ptr(), packet.len(), 0, &addr, 16) };
 
     if res < 0 {
         return Err(std::io::Error::last_os_error());
