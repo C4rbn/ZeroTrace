@@ -21,15 +21,10 @@ use nix::ifaddrs::getifaddrs;
 use xdp_interceptor::PacketInfo;
 
 #[derive(Parser)]
-#[command(
-    name = "zerotrace", 
-    about = "Universal Stealth Shield",
-    disable_version_flag = true
-)]
+#[command(name = "zerotrace", about = "Universal Stealth Shield")]
 struct Cli {
     #[arg(short, long)]
     quiet: bool,
-
     #[arg(short, long)]
     remove: bool,
 }
@@ -38,18 +33,13 @@ struct Cli {
 async fn main() -> Result<(), anyhow::Error> {
     let args = Cli::parse();
 
-    if let Err(e) = rlimit::setrlimit(rlimit::Resource::MEMLOCK, rlimit::INFINITY, rlimit::INFINITY) {
-        if !args.quiet {
-            eprintln!("[\x1b[33m!\x1b[0m] Warning: Could not lift MEMLOCK limits: {}", e);
-        }
-    }
+    if let Err(_) = rlimit::setrlimit(rlimit::Resource::MEMLOCK, rlimit::INFINITY, rlimit::INFINITY) {}
 
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
-
     ctrlc::set_handler(move || {
         r.store(false, Ordering::SeqCst);
-    }).expect("Error setting signal handler");
+    })?;
 
     let mut interfaces = Vec::new();
     if let Ok(addrs) = getifaddrs() {
@@ -65,91 +55,62 @@ async fn main() -> Result<(), anyhow::Error> {
     }
 
     if args.remove {
-        engine::log_event("EXIT", "ZeroTrace Shields detached. System restored.", false);
+        engine::log_event("EXIT", "ZeroTrace Shields detached.", false);
         return Ok(());
     }
 
-    if !args.quiet {
-        engine::log_event("BOOT", "ZeroTrace Active: Universal Portable Mode", false);
-    }
+    engine::log_event("BOOT", "ZeroTrace Active: Universal Portable Mode", args.quiet);
 
-    let _engine = Arc::new(engine::StealthEngine::new(None, 443));
+    // --- ORCHESTRATION FIX ---
+    let engine = Arc::new(engine::StealthEngine::new(Some("8.8.8.8"), 443, 500_000));
+    let engine_task = engine.clone();
     
-    tokio::task::spawn_blocking(|| {
-        tls_grease::execute_stealth_request("google.com"); 
+    tokio::task::spawn_blocking(move || {
         let mut headers = HashMap::new();
-        headers.insert(b"User-Agent".as_slice(), b"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36".as_slice());
-        let shuffled = header_shuffle::shuffle_headers(&headers);
-        let _ = header_shuffle::serialize_headers(&shuffled);
-        let _ = engine::log_event("SHIELD", "L7 Header Shuffling Initialized", false);
+        headers.insert(b"User-Agent".as_slice(), b"Mozilla/5.0 (Windows NT 10.0; Win64; x64)".as_slice());
+        
+        if let Err(e) = engine_task.dispatch_stealth_packet(&headers) {
+            engine::log_event("CRITICAL", &format!("Engine Dispatch Error: {}", e), false);
+        } else {
+            engine::log_event("SHIELD", "Stealth Dispatch Sequence Complete", false);
+        }
     }).await?;
 
-    let mut bpf = Ebpf::load(include_bytes_aligned!(
-        "../target/bpfel-unknown-none/release/xdp-interceptor"
-    ))?;
-    
+    let mut bpf = Ebpf::load(include_bytes_aligned!("../target/bpfel-unknown-none/release/xdp-interceptor"))?;
     let program: &mut Xdp = bpf.program_mut("xdp_mutate").unwrap().try_into()?;
     program.load()?;
 
     for iface in interfaces.clone() {
-        if let Err(_) = program.attach(&iface, XdpFlags::SKB_MODE) {
-            if !args.quiet { println!("[\x1b[31m!\x1b[0m] Interface {} rejected shield.", iface); }
-        } else if !args.quiet {
-            println!("[\x1b[32m+\x1b[0m] Shield locked on {}", iface);
-        }
+        let _ = program.attach(&iface, XdpFlags::SKB_MODE);
     }
 
-    let cpus = online_cpus().map_err(|_| anyhow::anyhow!("Failed to list CPUs"))?;
+    let cpus = online_cpus()?;
     let mut perf_array = AsyncPerfEventArray::try_from(bpf.take_map("PACKET_EVENTS").unwrap())?;
 
     for cpu_id in cpus {
-        let mut buf = match perf_array.open(cpu_id, Some(2)) {
-            Ok(b) => b,
-            Err(e) => {
-                if !args.quiet { eprintln!("[\x1b[31m!\x1b[0m] CPU {} map init failed: {}", cpu_id, e); }
-                continue;
-            }
-        };
-
+        let mut buf = perf_array.open(cpu_id, Some(2))?;
         let quiet = args.quiet;
-
         tokio::spawn(async move {
             let mut buffers = (0..10).map(|_| BytesMut::with_capacity(64)).collect::<Vec<_>>();
-
             while let Ok(events) = buf.read_events(&mut buffers).await {
                 for i in 0..events.read {
-                    if buffers[i].len() < std::mem::size_of::<PacketInfo>() { continue; }
                     let info = unsafe { &*(buffers[i].as_ptr() as *const PacketInfo) };
-                    
                     if !quiet {
-                        let src = Ipv4Addr::from(info.fast_host_src_addr());
-                        let dst = Ipv4Addr::from(info.fast_host_dst_addr());
-                        println!("[\x1b[35mBYPASS\x1b[0m] {} -> {} | L3/L4 Mutated", src, dst);
+                        println!("[\x1b[35mBYPASS\x1b[0m] {} -> {} | Mutated", 
+                            Ipv4Addr::from(info.fast_host_src_addr()), 
+                            Ipv4Addr::from(info.fast_host_dst_addr()));
                     }
                 }
             }
         });
     }
 
-    if !args.quiet {
-        engine::log_event("IDLE", "Stealth Active. Universal bypass engaged.", false);
-        println!("\x1b[2mPress Ctrl+C to exit or use --remove.\x1b[0m\n");
-    }
-
     while running.load(Ordering::SeqCst) {
         sleep(Duration::from_millis(200)).await;
     }
 
-    if !args.quiet { 
-        println!("\n\x1b[33mDetaching shields and restoring network path...\x1b[0m"); 
-    }
-
     for iface in interfaces {
         let _ = Command::new("ip").args(["link", "set", "dev", &iface, "xdp", "off"]).output();
-    }
-
-    if !args.quiet {
-        println!("[\x1b[32mOK\x1b[0m] ZeroTrace successfully detached.");
     }
 
     Ok(())
