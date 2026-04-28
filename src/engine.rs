@@ -11,25 +11,28 @@ use crate::header_shuffle;
 use crate::tls_grease;
 
 pub struct StealthEngine {
-    target_ip: Option<Ipv4Addr>,
-    target_port: u16,
-    base_delay_ns: u64,
+    pub target_ip: Option<Ipv4Addr>,
+    pub target_port: u16,
+    pub target_domain: String,
+    pub base_delay_ns: u64,
 }
 
 impl StealthEngine {
-    pub fn new(target: Option<&str>, port: u16, base_delay_ns: u64) -> Self {
+    pub fn new(target: Option<&str>, port: u16, domain: &str, base_delay_ns: u64) -> Self {
         Self {
             target_ip: target.and_then(|t| t.parse().ok()),
             target_port: port,
+            target_domain: domain.to_string(),
             base_delay_ns,
         }
     }
 
     pub fn dispatch_stealth_packet(&self, raw_headers: &HashMap<&[u8], &[u8]>) -> Result<()> {
         let shuffled = header_shuffle::shuffle_headers(raw_headers);
-        let _payload = header_shuffle::serialize_headers(&shuffled);
+        let payload = header_shuffle::serialize_headers(&shuffled);
         
-        tls_grease::execute_stealth_request("google.com");
+        // No longer hardcoded to google.com
+        tls_grease::execute_stealth_request(&self.target_domain);
 
         let chaos_seed = rand::thread_rng().gen_range(0..4096);
         let target_delay = self.base_delay_ns + chaos_seed;
@@ -45,6 +48,10 @@ impl StealthEngine {
             };
             
             let packet = tcp_syn_crafter::create_syn_packet(&packet_cfg);
+            
+            // Payload is now logically part of the dispatch
+            let _ready_payload = payload; 
+
             tcp_syn_crafter::send_raw_packet(ip.octets(), &packet)
                 .map_err(|e| anyhow!("Raw Socket Error: {}", e))?;
         }
