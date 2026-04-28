@@ -25,8 +25,6 @@ use xdp_interceptor::PacketInfo;
 struct Cli {
     #[arg(short, long)]
     quiet: bool,
-    #[arg(short, long, default_value = "8.8.8.8")]
-    target: String,
     #[arg(short, long)]
     remove: bool,
 }
@@ -34,20 +32,16 @@ struct Cli {
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let args = Cli::parse();
-
     if let Err(_) = rlimit::setrlimit(rlimit::Resource::MEMLOCK, rlimit::INFINITY, rlimit::INFINITY) {}
 
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
-    ctrlc::set_handler(move || {
-        r.store(false, Ordering::SeqCst);
-    })?;
+    ctrlc::set_handler(move || { r.store(false, Ordering::SeqCst); })?;
 
     let mut interfaces = Vec::new();
     if let Ok(addrs) = getifaddrs() {
         for ifaddr in addrs {
             let name = ifaddr.interface_name;
-            // Robust check: skip loopback and interfaces without an address
             if !ifaddr.flags.contains(nix::net::ifreq::InterfaceFlags::IFF_LOOPBACK) && ifaddr.address.is_some() {
                 if !interfaces.contains(&name) {
                     interfaces.push(name.clone());
@@ -62,23 +56,10 @@ async fn main() -> Result<(), anyhow::Error> {
         return Ok(());
     }
 
-    engine::log_event("BOOT", "ZeroTrace Active: Universal Portable Mode", args.quiet);
+    engine::log_event("BOOT", "ZeroTrace Active: Universal Global Mode", args.quiet);
 
-    // --- CONFIGURATION REFACTOR ---
-    let engine = Arc::new(engine::StealthEngine::new(Some(&args.target), 443, "google.com", 500_000));
-    let engine_task = engine.clone();
-    
-    tokio::task::spawn_blocking(move || {
-        let mut headers = HashMap::new();
-        headers.insert(b"User-Agent".as_slice(), b"Mozilla/5.0 (Windows NT 10.0; Win64; x64)".as_slice());
-        headers.insert(b"Accept".as_slice(), b"text/html,application/xhtml+xml".as_slice());
-        
-        if let Err(e) = engine_task.dispatch_stealth_packet(&headers) {
-            engine::log_event("CRITICAL", &format!("Engine Dispatch Error: {}", e), false);
-        } else {
-            engine::log_event("SHIELD", "Stealth Dispatch Sequence Complete", false);
-        }
-    }).await?;
+    // Initializing Global Orchestrator
+    let engine = Arc::new(engine::StealthEngine::new("google.com", 500_000));
 
     let mut bpf = Ebpf::load(include_bytes_aligned!("../target/bpfel-unknown-none/release/xdp-interceptor"))?;
     let program: &mut Xdp = bpf.program_mut("xdp_mutate").unwrap().try_into()?;
@@ -94,27 +75,37 @@ async fn main() -> Result<(), anyhow::Error> {
     for cpu_id in cpus {
         let mut buf = perf_array.open(cpu_id, Some(2))?;
         let quiet = args.quiet;
+        let engine_local = engine.clone();
+
         tokio::spawn(async move {
             let mut buffers = (0..10).map(|_| BytesMut::with_capacity(64)).collect::<Vec<_>>();
+            let mut headers = HashMap::new();
+            headers.insert(b"User-Agent".as_slice(), b"Mozilla/5.0 (Windows NT 10.0; Win64; x64)".as_slice());
+
             while let Ok(events) = buf.read_events(&mut buffers).await {
                 for i in 0..events.read {
-                    // RESTORED SAFETY CHECK: Verify buffer length before casting to PacketInfo
                     if buffers[i].len() < std::mem::size_of::<PacketInfo>() { continue; }
-                    
                     let info = unsafe { &*(buffers[i].as_ptr() as *const PacketInfo) };
+                    
+                    let dst_ip = Ipv4Addr::from(info.fast_host_dst_addr());
+                    
+                    // DYNAMIC TARGET PICKUP: Pick up the destination from the kernel event
+                    let engine_task = engine_local.clone();
+                    let h_clone = headers.clone();
+                    
+                    tokio::task::spawn_blocking(move || {
+                        let _ = engine_task.dispatch_stealth_sequence(dst_ip, &h_clone);
+                    });
+
                     if !quiet {
-                        println!("[\x1b[35mBYPASS\x1b[0m] {} -> {} | Mutated", 
-                            Ipv4Addr::from(info.fast_host_src_addr()), 
-                            Ipv4Addr::from(info.fast_host_dst_addr()));
+                        println!("[\x1b[35mBYPASS\x1b[0m] Found Target: {} | Sequence Dispatched", dst_ip);
                     }
                 }
             }
         });
     }
 
-    while running.load(Ordering::SeqCst) {
-        sleep(Duration::from_millis(200)).await;
-    }
+    while running.load(Ordering::SeqCst) { sleep(Duration::from_millis(200)).await; }
 
     for iface in interfaces {
         let _ = Command::new("ip").args(["link", "set", "dev", &iface, "xdp", "off"]).output();
