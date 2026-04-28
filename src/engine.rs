@@ -56,6 +56,7 @@ pub fn log_event(event_type: &str, message: &str, quiet: bool) {
     }
     
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+
     let colored_event = match event_type {
         "BOOT" => event_type.cyan(),
         "SHIELD" => event_type.green(),
@@ -66,5 +67,11 @@ pub fn log_event(event_type: &str, message: &str, quiet: bool) {
         _ => event_type.normal(),
     };
 
-    println!("[{}.{:03}] [{:<8}] {}", now.as_secs(), now.subsec_millis(), colored_event, message);
+    println!(
+        "[{}.{:03}] [{:<8}] {}", 
+        now.as_secs(), 
+        now.subsec_millis(),
+        colored_event,
+        message
+    );
 }
