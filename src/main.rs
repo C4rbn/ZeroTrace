@@ -17,7 +17,7 @@ use aya::maps::perf::AsyncPerfEventArray;
 use aya::util::online_cpus;
 use bytes::BytesMut;
 use nix::ifaddrs::getifaddrs;
-use nix::net::ifreq::InterfaceFlags;
+use nix::net::if_::InterfaceFlags;
 
 use xdp_interceptor::PacketInfo;
 
