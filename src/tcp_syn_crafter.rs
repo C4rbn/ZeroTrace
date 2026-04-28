@@ -1,10 +1,8 @@
-#![allow(unsafe_code)]
-#![allow(dead_code)]
-
 use std::mem;
 use std::ptr::addr_of;
+use std::sync::atomic::{AtomicI32, Ordering};
+use rand::Rng;
 
-// --- FFI Bindings ---
 extern "C" {
     fn socket(domain: i32, ty: i32, protocol: i32) -> i32;
     fn setsockopt(fd: i32, level: i32, optname: i32, optval: *const i32, optlen: u32) -> i32;
@@ -68,140 +66,148 @@ pub struct FullPacket {
 }
 
 #[repr(C, packed)]
-struct Phdr {
+struct PseudoHeader {
     src: [u8; 4],
     dst: [u8; 4],
     zero: u8,
     proto: u8,
     len: u16,
-    tcp: TcpHeader,
 }
 
 pub struct Config {
     pub src_ip: [u8; 4],
     pub dst_ip: [u8; 4],
-    pub sport: u16,
     pub dport: u16,
     pub window: u16,
 }
 
-static mut CACHED_SOCKET: i32 = -1;
+static SOCKET_FD: AtomicI32 = AtomicI32::new(-1);
 
-/// Calculates the internet checksum. 
-/// Utilizes AVX2 SIMD instructions if the hardware supports it and data is sufficient.
-#[inline(always)]
-pub unsafe fn calculate_checksum(data: *const u8, len: usize) -> u16 {
-    use std::arch::x86_64::*;
+pub fn internet_checksum(data: &[u8]) -> u16 {
+    let mut sum: u32 = 0;
+    let mut chunks = data.chunks_exact(2);
 
-    if is_x86_feature_detected!("avx2") && len >= 32 {
-        let mut sum_vec = _mm256_setzero_si256();
-        let block = _mm256_loadu_si256(data as *const __m256i);
-        
-        sum_vec = _mm256_add_epi64(sum_vec, _mm256_sad_epu8(block, _mm256_setzero_si256()));
-
-        let sum0 = _mm256_extract_epi64(sum_vec, 0) as u64;
-        let sum1 = _mm256_extract_epi64(sum_vec, 1) as u64;
-        let sum2 = _mm256_extract_epi64(sum_vec, 2) as u64;
-        let sum3 = _mm256_extract_epi64(sum_vec, 3) as u64;
-
-        let total_sum: u64 = sum0 + sum1 + sum2 + sum3;
-        let mut res_sum: u32 = (total_sum as u32) + (total_sum >> 32) as u32;
-
-        while (res_sum >> 16) != 0 {
-            res_sum = (res_sum & 0xFFFF) + (res_sum >> 16);
-        }
-        !(res_sum as u16)
-    } else {
-        let mut sum: u32 = 0;
-        let ptr = data as *const u16;
-        for i in 0..(len / 2) {
-            sum += u16::from_be(std::ptr::read_unaligned(ptr.add(i))) as u32;
-        }
-        if len % 2 == 1 {
-            sum += (*data.add(len - 1) as u32) << 8;
-        }
-        while (sum >> 16) != 0 {
-            sum = (sum & 0xFFFF) + (sum >> 16);
-        }
-        !(sum as u16)
+    for chunk in chunks.by_ref() {
+        let word = u16::from_be_bytes([chunk[0], chunk[1]]);
+        sum = sum.wrapping_add(word as u32);
     }
+
+    if let Some(&last) = chunks.remainder().first() {
+        sum = sum.wrapping_add((last as u32) << 8);
+    }
+
+    while (sum >> 16) != 0 {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+
+    !(sum as u16)
 }
 
 pub fn create_syn_packet(cfg: &Config) -> Vec<u8> {
-    unsafe {
-        let mut pkt = FullPacket {
-            ip: Ipv4Header {
-                v_ihl: 0x45,
-                tos: 0,
-                len: (40u16).to_be(),
-                id: 0x1337u16.to_be(),
-                off: 0x4000u16.to_be(),
-                ttl: 64,
-                pro: 6,
-                csum: 0,
-                src: cfg.src_ip,
-                dst: cfg.dst_ip,
-            },
-            tcp: TcpHeader {
-                sport: cfg.sport.to_be(),
-                dport: cfg.dport.to_be(),
-                seq: 0xDEADBEEF,
-                ack: 0,
-                off_res: 0x50,
-                flags: 0x02,
-                win: cfg.window.to_be(),
-                csum: 0,
-                urp: 0,
-            },
-        };
+    let mut rng = rand::thread_rng();
+    let seq_num = rng.gen::<u32>();
+    let src_port = rng.gen_range(49152..65535);
 
-        let phdr = Phdr {
-            src: cfg.src_ip,
-            dst: cfg.dst_ip,
-            zero: 0,
-            proto: 6,
-            len: (20u16).to_be(),
-            tcp: pkt.tcp,
-        };
+    let mut tcp_header = TcpHeader {
+        sport: src_port.to_be(),
+        dport: cfg.dport.to_be(),
+        seq: seq_num.to_be(),
+        ack: 0,
+        off_res: 0x50,
+        flags: 0x02,
+        win: cfg.window.to_be(),
+        csum: 0,
+        urp: 0,
+    };
 
-        pkt.tcp.csum = calculate_checksum(addr_of!(phdr) as *const u8, mem::size_of::<Phdr>());
-        pkt.ip.csum = calculate_checksum(addr_of!(pkt.ip) as *const u8, 20);
+    let phdr = PseudoHeader {
+        src: cfg.src_ip,
+        dst: cfg.dst_ip,
+        zero: 0,
+        proto: IPPROTO_TCP as u8,
+        len: (20u16).to_be(),
+    };
 
-        let p_ptr = addr_of!(pkt) as *const u8;
-        std::slice::from_raw_parts(p_ptr, 40).to_vec()
-    }
+    let mut tcp_checksum_data = Vec::with_capacity(32);
+    tcp_checksum_data.extend_from_slice(unsafe {
+        std::slice::from_raw_parts(addr_of!(phdr) as *const u8, mem::size_of::<PseudoHeader>())
+    });
+    tcp_checksum_data.extend_from_slice(unsafe {
+        std::slice::from_raw_parts(addr_of!(tcp_header) as *const u8, mem::size_of::<TcpHeader>())
+    });
+    
+    tcp_header.csum = internet_checksum(&tcp_checksum_data).to_be();
+
+    let mut ip_header = Ipv4Header {
+        v_ihl: 0x45,
+        tos: 0,
+        len: (40u16).to_be(),
+        id: rng.gen::<u16>().to_be(),
+        off: 0x4000u16.to_be(),
+        ttl: 64,
+        pro: IPPROTO_TCP as u8,
+        csum: 0,
+        src: cfg.src_ip,
+        dst: cfg.dst_ip,
+    };
+
+    ip_header.csum = internet_checksum(unsafe {
+        std::slice::from_raw_parts(addr_of!(ip_header) as *const u8, 20)
+    }).to_be();
+
+    let mut packet = Vec::with_capacity(40);
+    packet.extend_from_slice(unsafe {
+        std::slice::from_raw_parts(addr_of!(ip_header) as *const u8, 20)
+    });
+    packet.extend_from_slice(unsafe {
+        std::slice::from_raw_parts(addr_of!(tcp_header) as *const u8, 20)
+    });
+
+    packet
 }
 
 pub fn send_raw_packet(dst_ip: [u8; 4], packet: &[u8]) -> Result<(), std::io::Error> {
-    unsafe {
-        if CACHED_SOCKET == -1 {
-            CACHED_SOCKET = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
-            if CACHED_SOCKET < 0 {
+    let mut fd = SOCKET_FD.load(Ordering::Relaxed);
+    
+    if fd == -1 {
+        unsafe {
+            fd = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
+            if fd < 0 {
                 return Err(std::io::Error::last_os_error());
             }
             let on: i32 = 1;
-            setsockopt(CACHED_SOCKET, IPPROTO_IP, IP_HDRINCL, &on, 4);
+            setsockopt(fd, IPPROTO_IP, IP_HDRINCL, &on, 4);
         }
+        
+        match SOCKET_FD.compare_exchange(-1, fd, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => {},
+            Err(existing_fd) => {
+                unsafe { libc::close(fd) };
+                fd = existing_fd;
+            }
+        }
+    }
 
-        let addr = SockAddrIn {
-            family: AF_INET as u16,
-            port: 0,
-            addr: dst_ip,
-            zero: [0; 8],
-        };
+    let addr = SockAddrIn {
+        family: AF_INET as u16,
+        port: 0,
+        addr: dst_ip,
+        zero: [0; 8],
+    };
 
-        let res = sendto(
-            CACHED_SOCKET,
+    let res = unsafe {
+        sendto(
+            fd,
             packet.as_ptr(),
             packet.len(),
             0,
             &addr,
             16,
-        );
+        )
+    };
 
-        if res < 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        Ok(())
+    if res < 0 {
+        return Err(std::io::Error::last_os_error());
     }
+    Ok(())
 }
