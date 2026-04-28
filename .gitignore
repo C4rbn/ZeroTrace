@@ -1,0 +1,24 @@
+# --- RUST & COMPILATION ---
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# --- BPF ARTIFACTS ---
+# Ignore the specific BPF objects but keep the source
+src/xdp-interceptor/target/
+*.bc
+*.o
+
+# --- VENDORED DEPENDENCIES ---
+# We clone these during setup, so we don't want them in our primary repo
+third_party/boring/
+third_party/boringssl/
+
+# --- SYSTEM & LOGS ---
+*.log
+.DS_Store
+.env
+
+# --- EXECUTABLES ---
+# Ignore any compiled binaries in the root
+zerotrace
