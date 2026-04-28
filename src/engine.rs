@@ -35,7 +35,7 @@ impl StealthEngine {
         sleep(Duration::from_nanos(target_delay));
 
         let packet_cfg = tcp_syn_crafter::Config {
-            src_ip: [0, 0, 0, 0],
+            src_ip: [0, 0, 0, 0], // Kernel will fill the correct source IP
             dst_ip: dynamic_ip.octets(),
             dport: 443,
             window: 64240,
@@ -50,28 +50,23 @@ impl StealthEngine {
     }
 }
 
-pub fn log_event(event_type: &str, message: &str, quiet: bool) {
-    if quiet && !["BYPASS", "CRITICAL", "SHIELD", "BOOT", "EXIT"].contains(&event_type) {
+pub fn log_event(status: &str, message: &str, quiet: bool) {
+    if quiet && !["CRIT", "BOOT", "EXIT"].contains(&status) {
         return;
     }
     
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let timestamp = now.as_secs();
 
-    let colored_event = match event_type {
-        "BOOT" => event_type.cyan(),
-        "SHIELD" => event_type.green(),
-        "CRITICAL" => event_type.red(),
-        "BYPASS" => event_type.magenta(),
-        "IDLE" => event_type.blue(),
-        "EXIT" => event_type.yellow(),
-        _ => event_type.normal(),
+    // OpenVPN-style professional status mapping
+    let status_styled = match status {
+        "BOOT"    => "INITIALIZING".cyan().bold(),
+        "BYPASS"  => "TUN:UP".magenta(),
+        "SHIELD"  => "PROTECT".green(),
+        "CRIT"    => "ERROR".red().bold(),
+        "EXIT"    => "SIGTERM".yellow(),
+        _         => status.normal(),
     };
 
-    println!(
-        "[{}.{:03}] [{:<8}] {}", 
-        now.as_secs(), 
-        now.subsec_millis(),
-        colored_event,
-        message
-    );
+    println!("{:>10} [{}] {}", timestamp, status_styled, message);
 }
