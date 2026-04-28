@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use std::hint::spin_loop;
+use std::time::{SystemTime, UNIX_EPOCH, Duration};
+use std::thread::sleep;
+use anyhow::{Result, anyhow};
+use colored::Colorize;
+use rand::Rng;
 
 use crate::tcp_syn_crafter;
 use crate::header_shuffle;
 use crate::tls_grease;
 
-/// ZeroTrace Core Stealth Engine
-/// Handles L4/L7 mutation logic and high-precision packet orchestration.
 pub struct StealthEngine {
     target_ip: Option<Ipv4Addr>,
     target_port: u16,
@@ -16,92 +17,64 @@ pub struct StealthEngine {
 }
 
 impl StealthEngine {
-    /// Initialize a new engine instance.
-    /// If target is None, the engine operates in Global Passive Mode.
-    pub fn new(target: Option<&str>, port: u16) -> Self {
+    pub fn new(target: Option<&str>, port: u16, base_delay_ns: u64) -> Self {
         Self {
             target_ip: target.and_then(|t| t.parse().ok()),
             target_port: port,
-            base_delay_ns: 500_000, 
+            base_delay_ns,
         }
     }
 
-    /// Primary dispatcher for stealth operations.
-    /// Sequence: Identity Mutation -> Entropy Generation -> Precision Timing -> Handoff.
-    pub fn dispatch_stealth_packet(&self, raw_headers: &HashMap<&[u8], &[u8]>) -> Result<(), String> {
-        
-        // 1. Layer 7 Identity Mutation
+    pub fn dispatch_stealth_packet(&self, raw_headers: &HashMap<&[u8], &[u8]>) -> Result<()> {
         let shuffled = header_shuffle::shuffle_headers(raw_headers);
         let _payload = header_shuffle::serialize_headers(&shuffled);
-        let _grease = tls_grease::peak_grease_u16(); 
+        
+        tls_grease::execute_stealth_request("google.com");
 
-        // 2. Jitter Entropy Generation
-        let chaos_seed = (SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .subsec_nanos() % 4096) as u64;
-            
+        let chaos_seed = rand::thread_rng().gen_range(0..4096);
         let target_delay = self.base_delay_ns + chaos_seed;
 
-        // 3. Execution Path Selection
-        match self.target_ip {
-            Some(ip) => {
-                let packet_cfg = tcp_syn_crafter::Config {
-                    src_ip: [0, 0, 0, 0],
-                    dst_ip: ip.octets(),
-                    sport: 0,
-                    dport: self.target_port,
-                    window: 64240,        
-                };
-                
-                let packet = tcp_syn_crafter::create_syn_packet(&packet_cfg);
+        sleep(Duration::from_nanos(target_delay));
 
-                // Nanosecond Precision Spin-Lock
-                let start = Instant::now();
-                while start.elapsed().as_nanos() < target_delay as u128 {
-                    spin_loop();
-                }
-
-                tcp_syn_crafter::send_raw_packet(ip.octets(), &packet)
-                    .map_err(|e| format!("Dispatch Failure: {:?}", e))
-            },
-            None => {
-                let start = Instant::now();
-                while start.elapsed().as_nanos() < target_delay as u128 {
-                    spin_loop(); 
-                }
-                Ok(())
-            }
+        if let Some(ip) = self.target_ip {
+            let packet_cfg = tcp_syn_crafter::Config {
+                src_ip: [0, 0, 0, 0],
+                dst_ip: ip.octets(),
+                dport: self.target_port,
+                window: 64240,
+            };
+            
+            let packet = tcp_syn_crafter::create_syn_packet(&packet_cfg);
+            tcp_syn_crafter::send_raw_packet(ip.octets(), &packet)
+                .map_err(|e| anyhow!("Raw Socket Error: {}", e))?;
         }
+
+        Ok(())
     }
 }
 
-/// Unified Telemetry and Event Logging
 pub fn log_event(event_type: &str, message: &str, quiet: bool) {
     if quiet && !["BYPASS", "CRITICAL", "SHIELD", "BOOT", "EXIT"].contains(&event_type) {
         return;
     }
     
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
 
-    let color = match event_type {
-        "BOOT" => "\x1b[36m",    
-        "SHIELD" => "\x1b[32m",  
-        "CRITICAL" => "\x1b[31m",
-        "BYPASS" => "\x1b[35m",   
-        "IDLE" => "\x1b[34m",     
-        "EXIT" => "\x1b[33m",     
-        _ => "\x1b[0m",
+    let colored_event = match event_type {
+        "BOOT" => event_type.cyan(),
+        "SHIELD" => event_type.green(),
+        "CRITICAL" => event_type.red(),
+        "BYPASS" => event_type.magenta(),
+        "IDLE" => event_type.blue(),
+        "EXIT" => event_type.yellow(),
+        _ => event_type.normal(),
     };
 
     println!(
-        "[{}.{:03}] [{}{:<8}\x1b[0m] {}", 
+        "[{}.{:03}] [{:<8}] {}", 
         now.as_secs(), 
         now.subsec_millis(),
-        color,
-        event_type, 
+        colored_event,
         message
     );
 }
