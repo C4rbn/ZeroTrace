@@ -1,7 +1,7 @@
 [package]
 name = "zerotrace"
 version = "0.1.0"
-edition = "2026"
+edition = "2021"
 authors = ["C4rbn"]
 
 [workspace]
@@ -10,7 +10,7 @@ exclude = ["third_party"]
 
 [workspace.package]
 version = "0.1.0"
-edition = "2026"
+edition = "2021"
 authors = ["C4rbn"]
 rust-version = "1.70"
 homepage = "https://github.com/C4rbn/ZeroTrace"
@@ -41,6 +41,8 @@ foreign-types = { workspace = true }
 foreign-types-shared = { workspace = true }
 rlimit = "0.10"
 xdp-interceptor = { path = "src/xdp-interceptor" }
+getrandom = "0.2"
+colored = "2.0"
 
 [patch.crates-io]
 boring = { path = "third_party/boring/boring" }
