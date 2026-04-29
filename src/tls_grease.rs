@@ -6,6 +6,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[allow(dead_code)]
 #[inline(always)]
 fn hardware_rand_u64() -> u64 {
     let mut val: u64 = 0;
@@ -32,6 +33,7 @@ fn hardware_rand_u64() -> u64 {
         .as_nanos() as u64
 }
 
+#[allow(dead_code)]
 pub fn peak_grease_u16() -> u16 {
     let val = (hardware_rand_u64() & 0x0F) as u16;
     (val << 12) | (0x0A00) | (val << 4) | 0x0A
@@ -63,7 +65,7 @@ pub fn execute_stealth_request(host: &str) {
     let connector = match build_stealth_connector() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("\x1b[31m[!] Builder Error:\x1b[0m {:?}", e);
+            eprintln!("[!] Builder Error: {:?}", e);
             return;
         }
     };
@@ -71,7 +73,7 @@ pub fn execute_stealth_request(host: &str) {
     let stream = match TcpStream::connect((host, 443)) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("\x1b[31m[!] Network Error:\x1b[0m {:?}", e);
+            eprintln!("[!] Network Error: {:?}", e);
             return;
         }
     };
@@ -85,8 +87,8 @@ pub fn execute_stealth_request(host: &str) {
             let _ = tls.write_all(request.as_bytes());
             let mut res = [0u8; 1024];
             let _ = tls.read(&mut res);
-            println!("\x1b[32m[SUCCESS]\x1b[0m Native Stealth Handshake Completed.");
+            println!("[SUCCESS] Native Stealth Handshake Completed.");
         }
-        Err(e) => eprintln!("\x1b[31m[FAIL]\x1b[0m Handshake Error: {:?}", e),
+        Err(e) => eprintln!("[FAIL] Handshake Error: {:?}", e),
     }
 }
