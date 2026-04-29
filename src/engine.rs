@@ -10,23 +10,28 @@ use crate::header_shuffle;
 use crate::tls_grease;
 
 pub struct StealthEngine {
-    pub target_domain: String,
+    pub local_ip: Ipv4Addr,
     pub base_delay_ns: u64,
 }
 
 impl StealthEngine {
-    pub fn new(domain: &str, base_delay_ns: u64) -> Self {
+    pub fn new(local_ip: Ipv4Addr, base_delay_ns: u64) -> Self {
         Self {
-            target_domain: domain.to_string(),
+            local_ip,
             base_delay_ns,
         }
     }
 
-    pub fn dispatch_stealth_sequence(&self, dynamic_ip: Ipv4Addr, raw_headers: &HashMap<&[u8], &[u8]>) -> Result<()> {
+    pub fn dispatch_stealth_sequence(
+        &self, 
+        dynamic_ip: Ipv4Addr, 
+        target_domain: &str, 
+        raw_headers: &HashMap<&[u8], &[u8]>
+    ) -> Result<()> {
         let shuffled = header_shuffle::shuffle_headers(raw_headers);
         let _payload = header_shuffle::serialize_headers(&shuffled);
         
-        tls_grease::execute_stealth_request(&self.target_domain);
+        tls_grease::execute_stealth_request(target_domain);
 
         let chaos_seed = rand::thread_rng().gen_range(0..4096);
         let target_delay = self.base_delay_ns + chaos_seed;
@@ -34,7 +39,7 @@ impl StealthEngine {
         sleep(Duration::from_nanos(target_delay));
 
         let packet_cfg = tcp_syn_crafter::Config {
-            src_ip: [0, 0, 0, 0], 
+            src_ip: self.local_ip.octets(), 
             dst_ip: dynamic_ip.octets(),
             dport: 443,
             window: 64240,
