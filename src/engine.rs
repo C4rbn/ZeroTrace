@@ -1,4 +1,4 @@
-use std::net::{Ipv4Addr, UdpSocket};
+use std::net::{IpAddr, UdpSocket};
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use std::thread::sleep;
 use anyhow::{Result, anyhow};
@@ -15,61 +15,40 @@ impl StealthEngine {
         Self { base_delay_ns }
     }
 
-    // Industrial Standard: Use kernel UDP connect to dynamically resolve the egress IP
-    fn get_egress_ip(target: Ipv4Addr) -> Result<Ipv4Addr> {
-        let socket = UdpSocket::bind("0.0.0.0:0")?;
+    fn get_egress_ip(target: IpAddr) -> Result<IpAddr> {
+        let bind_addr = match target {
+            IpAddr::V4(_) => "0.0.0.0:0",
+            IpAddr::V6(_) => "[::]:0",
+        };
+        let socket = UdpSocket::bind(bind_addr)?;
         socket.connect((target, 53))?;
-        match socket.local_addr()? {
-            std::net::SocketAddr::V4(addr) => Ok(*addr.ip()),
-            _ => Err(anyhow!("Failed to resolve IPv4 egress")),
-        }
+        Ok(socket.local_addr()?.ip())
     }
 
-    pub fn dispatch_stealth_sequence(&self, dynamic_ip: Ipv4Addr) -> Result<()> {
-        // Resolve correct local IP based on the kernel's routing table dynamically
-        let local_ip = Self::get_egress_ip(dynamic_ip).unwrap_or(Ipv4Addr::new(0, 0, 0, 0));
+    pub fn dispatch_stealth_sequence(&self, dynamic_ip: IpAddr) -> Result<()> {
+        let local_ip = Self::get_egress_ip(dynamic_ip).map_err(|e| anyhow!("Routing Error: {}", e))?;
         
-        if local_ip.is_unspecified() {
-            return Err(anyhow!("Routing failed for target {}", dynamic_ip));
-        }
-
         let chaos_seed = rand::thread_rng().gen_range(0..4096);
-        let target_delay = self.base_delay_ns + chaos_seed;
+        sleep(Duration::from_nanos(self.base_delay_ns + chaos_seed));
 
-        sleep(Duration::from_nanos(target_delay));
-
-        let packet_cfg = tcp_syn_crafter::Config {
-            src_ip: local_ip.octets(), 
-            dst_ip: dynamic_ip.octets(),
-            dport: 443,
-            window: 64240,
-        };
-        
-        let packet = tcp_syn_crafter::create_syn_packet(&packet_cfg);
-
-        tcp_syn_crafter::send_raw_packet(dynamic_ip.octets(), &packet)
-            .map_err(|e| anyhow!("Global Dispatch Error: {}", e))?;
+        match (local_ip, dynamic_ip) {
+            (IpAddr::V4(src), IpAddr::V4(dst)) => {
+                let packet = tcp_syn_crafter::create_syn_packet_v4(src.octets(), dst.octets(), 443, 64240);
+                tcp_syn_crafter::send_raw_packet_v4(dst.octets(), &packet)?;
+            },
+            (IpAddr::V6(src), IpAddr::V6(dst)) => {
+                let packet = tcp_syn_crafter::create_syn_packet_v6(src.octets(), dst.octets(), 443, 64240);
+                tcp_syn_crafter::send_raw_packet_v6(dst.octets(), &packet)?;
+            },
+            _ => return Err(anyhow!("IP Version Mismatch")),
+        }
 
         Ok(())
     }
 }
 
 pub fn log_event(status: &str, message: &str, quiet: bool) {
-    if quiet && !["CRIT", "BOOT", "EXIT"].contains(&status) {
-        return;
-    }
-    
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-    let timestamp = now.as_secs();
-
-    let status_text = match status {
-        "BOOT"    => "INITIALIZING",
-        "BYPASS"  => "TUN:UP",
-        "SHIELD"  => "PROTECT",
-        "CRIT"    => "ERROR",
-        "EXIT"    => "SIGTERM",
-        _         => status,
-    };
-
-    println!("{:>10} [{}] {}", timestamp, status_text, message);
+    if quiet && !["CRIT", "BOOT", "EXIT"].contains(&status) { return; }
+    let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    println!("{:>10} [{}] {}", ts, status, message);
 }
