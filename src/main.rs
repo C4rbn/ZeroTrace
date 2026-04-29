@@ -43,13 +43,20 @@ async fn main() -> Result<(), anyhow::Error> {
     })?;
 
     let mut interfaces = Vec::new();
+    let mut local_ipv4 = Ipv4Addr::new(127, 0, 0, 1);
+
     if let Ok(addrs) = getifaddrs() {
         for ifaddr in addrs {
             let name = ifaddr.interface_name;
-            if !ifaddr.flags.contains(InterfaceFlags::IFF_LOOPBACK) && ifaddr.address.is_some() {
-                if !interfaces.contains(&name) {
-                    interfaces.push(name.clone());
-                    let _ = Command::new("ip").args(["link", "set", "dev", &name, "xdp", "off"]).output();
+            if !ifaddr.flags.contains(InterfaceFlags::IFF_LOOPBACK) {
+                if let Some(address) = ifaddr.address {
+                    if let Some(sock_addr) = address.as_sockaddr_in() {
+                        local_ipv4 = Ipv4Addr::from(sock_addr.ip());
+                        if !interfaces.contains(&name) {
+                            interfaces.push(name.clone());
+                            let _ = Command::new("ip").args(["link", "set", "dev", &name, "xdp", "off"]).output();
+                        }
+                    }
                 }
             }
         }
@@ -62,7 +69,8 @@ async fn main() -> Result<(), anyhow::Error> {
 
     engine::log_event("BOOT", "ZeroTrace Active: Universal Global Mode", args.quiet);
 
-    let engine = Arc::new(engine::StealthEngine::new("google.com", 500_000));
+    let target_domain = "google.com";
+    let engine = Arc::new(engine::StealthEngine::new(local_ipv4, 500_000));
 
     let mut bpf = Ebpf::load(include_bytes_aligned!("../target/bpfel-unknown-none/release/xdp-interceptor"))?;
     let program: &mut Xdp = bpf.program_mut("xdp_mutate").unwrap().try_into()?;
@@ -79,6 +87,7 @@ async fn main() -> Result<(), anyhow::Error> {
         let mut buf = perf_array.open(cpu_id, Some(2))?;
         let quiet = args.quiet;
         let engine_local = engine.clone();
+        let domain_str = target_domain.to_string();
 
         tokio::spawn(async move {
             let mut buffers = (0..10).map(|_| BytesMut::with_capacity(64)).collect::<Vec<_>>();
@@ -93,19 +102,18 @@ async fn main() -> Result<(), anyhow::Error> {
                     
                     let engine_task = engine_local.clone();
                     let h_clone = headers.clone();
+                    let d_clone = domain_str.clone();
                     
                     tokio::task::spawn_blocking(move || {
-                        let _ = engine_task.dispatch_stealth_sequence(dst_ip, &h_clone);
+                        let _ = engine_task.dispatch_stealth_sequence(dst_ip, &d_clone, &h_clone);
                     });
 
-                    // Clean, non-noisy bypass logging
                     engine::log_event("BYPASS", &format!("Target Identified: {}", dst_ip), quiet);
                 }
             }
         });
     }
 
-    // Wait for the exit signal
     while running.load(Ordering::SeqCst) { 
         sleep(Duration::from_millis(100)).await; 
     }
@@ -116,6 +124,5 @@ async fn main() -> Result<(), anyhow::Error> {
         let _ = Command::new("ip").args(["link", "set", "dev", &iface, "xdp", "off"]).output();
     }
 
-    // Force exit to ensure all background tasks are killed
     std::process::exit(0);
 }
