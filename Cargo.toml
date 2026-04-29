@@ -11,7 +11,7 @@ anyhow = "1.0.90"
 ctrlc = "3.5.2"
 aya = { version = "0.13.1", features = ["async_tokio"] }
 tokio = { version = "1.40", features = ["full", "sync"] }
-nix = { version = "0.29", features = ["net", "user", "ifaddrs"] }
+nix = { version = "0.29", features = ["net", "user"] }
 libc = "0.2.163"
 rand = "0.8.5"
 bytes = "1.7"
