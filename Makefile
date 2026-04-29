@@ -2,7 +2,7 @@ BINARY_NAME=zerotrace
 BUILD_DIR=target/release
 DEST_DIR=/usr/local/bin
 
-all: build
+all: clean build
 
 build:
 	cargo build --release
@@ -18,3 +18,4 @@ uninstall:
 
 clean:
 	cargo clean
+	rm -f target/release/$(BINARY_NAME)
