@@ -10,6 +10,8 @@ fn main() {
         .args([
             "-O2",
             "-target", "bpf",
+            "-mcpu=v2",
+            "-g",
             "-D__TARGET_ARCH_x86",
             "-I/usr/include",
             "-I/usr/include/x86_64-linux-gnu",
