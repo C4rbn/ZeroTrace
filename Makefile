@@ -1,19 +1,21 @@
 BINARY_NAME=zerotrace
-TARGET_DIR=target/release
-INSTALL_PATH=/usr/local/bin
+TARGET_PATH=target/release/$(BINARY_NAME)
+INSTALL_PATH=/usr/local/bin/$(BINARY_NAME)
 
 all: build
 
 build:
 	cargo build --release
+	strip $(TARGET_PATH)
 
 install: build
-	sudo cp $(TARGET_DIR)/$(BINARY_NAME) $(INSTALL_PATH)/$(BINARY_NAME)
-	sudo chmod +x $(INSTALL_PATH)/$(BINARY_NAME)
-	sudo setcap cap_net_raw,cap_net_admin,cap_bpf+ep $(INSTALL_PATH)/$(BINARY_NAME)
+	sudo rm -f $(INSTALL_PATH)
+	sudo cp $(TARGET_PATH) $(INSTALL_PATH)
+	sudo chmod 755 $(INSTALL_PATH)
+	sudo setcap cap_net_raw,cap_net_admin,cap_bpf+ep $(INSTALL_PATH)
 
 uninstall:
-	sudo rm -f $(INSTALL_PATH)/$(BINARY_NAME)
+	sudo rm -f $(INSTALL_PATH)
 
 clean:
 	cargo clean
