@@ -1,15 +1,13 @@
 mod engine;
 mod tcp_syn_crafter;
-mod header_shuffle;
-mod tls_grease;
 
 use clap::Parser;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::net::Ipv4Addr;
-use std::collections::HashMap;
 use tokio::time::{sleep, Duration};
+use tokio::sync::Semaphore;
 
 use aya::{include_bytes_aligned, Ebpf}; 
 use aya::programs::{Xdp, XdpFlags};
@@ -43,17 +41,16 @@ async fn main() -> Result<(), anyhow::Error> {
     })?;
 
     let mut interfaces = Vec::new();
-    let mut local_ipv4 = Ipv4Addr::new(127, 0, 0, 1);
 
     if let Ok(addrs) = getifaddrs() {
         for ifaddr in addrs {
             let name = ifaddr.interface_name;
             if !ifaddr.flags.contains(InterfaceFlags::IFF_LOOPBACK) {
                 if let Some(address) = ifaddr.address {
-                    if let Some(sock_addr) = address.as_sockaddr_in() {
-                        local_ipv4 = Ipv4Addr::from(sock_addr.ip());
+                    if address.as_sockaddr_in().is_some() {
                         if !interfaces.contains(&name) {
                             interfaces.push(name.clone());
+                            // Ensure clean state before attaching
                             let _ = Command::new("ip").args(["link", "set", "dev", &name, "xdp", "off"]).output();
                         }
                     }
@@ -69,8 +66,12 @@ async fn main() -> Result<(), anyhow::Error> {
 
     engine::log_event("BOOT", "ZeroTrace Active: Universal Global Mode", args.quiet);
 
-    let target_domain = "google.com";
-    let engine = Arc::new(engine::StealthEngine::new(local_ipv4, 500_000));
+    // Initialize Engine (No more hardcoded IPs)
+    let engine = Arc::new(engine::StealthEngine::new(500_000));
+
+    // Concurrency limiter: Max 1000 concurrent stealth sequences.
+    // This prevents thread pool exhaustion and memory leaks during high traffic.
+    let task_semaphore = Arc::new(Semaphore::new(1000));
 
     let mut bpf = Ebpf::load(include_bytes_aligned!("../target/bpfel-unknown-none/release/xdp-interceptor"))?;
     let program: &mut Xdp = bpf.program_mut("xdp_mutate").unwrap().try_into()?;
@@ -87,12 +88,10 @@ async fn main() -> Result<(), anyhow::Error> {
         let mut buf = perf_array.open(cpu_id, Some(2))?;
         let quiet = args.quiet;
         let engine_local = engine.clone();
-        let domain_str = target_domain.to_string();
+        let sem_local = task_semaphore.clone();
 
         tokio::spawn(async move {
             let mut buffers = (0..10).map(|_| BytesMut::with_capacity(64)).collect::<Vec<_>>();
-            let mut headers = HashMap::new();
-            headers.insert(b"User-Agent".as_slice(), b"Mozilla/5.0 (Windows NT 10.0; Win64; x64)".as_slice());
 
             while let Ok(events) = buf.read_events(&mut buffers).await {
                 for i in 0..events.read {
@@ -100,15 +99,17 @@ async fn main() -> Result<(), anyhow::Error> {
                     let info = unsafe { &*(buffers[i].as_ptr() as *const PacketInfo) };
                     let dst_ip = Ipv4Addr::from(info.fast_host_dst_addr());
                     
-                    let engine_task = engine_local.clone();
-                    let h_clone = headers.clone();
-                    let d_clone = domain_str.clone();
-                    
-                    tokio::task::spawn_blocking(move || {
-                        let _ = engine_task.dispatch_stealth_sequence(dst_ip, &d_clone, &h_clone);
-                    });
+                    // try_acquire_owned implements "Load Shedding". If overloaded, it skips the packet.
+                    if let Ok(permit) = sem_local.clone().try_acquire_owned() {
+                        let engine_task = engine_local.clone();
+                        
+                        tokio::task::spawn_blocking(move || {
+                            let _ = engine_task.dispatch_stealth_sequence(dst_ip);
+                            drop(permit);
+                        });
 
-                    engine::log_event("BYPASS", &format!("Target Identified: {}", dst_ip), quiet);
+                        engine::log_event("BYPASS", &format!("Target Identified: {}", dst_ip), quiet);
+                    }
                 }
             }
         });
