@@ -59,6 +59,7 @@ pub struct SockAddrIn {
     pub zero: [u8; 8],
 }
 
+#[allow(dead_code)]
 #[repr(C, packed)]
 pub struct FullPacket {
     pub ip: Ipv4Header,
@@ -105,7 +106,7 @@ pub fn internet_checksum(data: &[u8]) -> u16 {
 
 pub fn create_syn_packet(cfg: &Config) -> Vec<u8> {
     let mut rng = rand::thread_rng();
-    let seq_num = rng.r#gen::<u32>();
+    let seq_num = rng.gen::<u32>();
     let src_port: u16 = rng.gen_range(49152..65535);
 
     let mut tcp_header = TcpHeader {
@@ -142,7 +143,7 @@ pub fn create_syn_packet(cfg: &Config) -> Vec<u8> {
         v_ihl: 0x45,
         tos: 0,
         len: (40u16).to_be(),
-        id: rng.r#gen::<u16>().to_be(),
+        id: rng.gen::<u16>().to_be(),
         off: 0x4000u16.to_be(),
         ttl: 64,
         pro: IPPROTO_TCP as u8,
