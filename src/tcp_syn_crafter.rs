@@ -1,4 +1,5 @@
-use std::mem::{self, addr_of};
+use std::mem;
+use std::ptr::addr_of;
 use std::sync::atomic::{AtomicI32, Ordering};
 use rand::Rng;
 
@@ -95,7 +96,7 @@ pub fn internet_checksum(data: &[u8]) -> u16 {
 pub fn create_syn_packet_v4(src_ip: [u8; 4], dst_ip: [u8; 4], dport: u16, window: u16) -> Vec<u8> {
     let mut rng = rand::thread_rng();
     let mut tcp_header = TcpHeader {
-        sport: rng.gen_range(49152..65535).to_be(),
+        sport: rng.gen_range(49152..=65535u16).to_be(),
         dport: dport.to_be(),
         seq: rng.gen::<u32>().to_be(),
         ack: 0,
@@ -129,7 +130,7 @@ pub fn create_syn_packet_v4(src_ip: [u8; 4], dst_ip: [u8; 4], dport: u16, window
 pub fn create_syn_packet_v6(src_ip: [u8; 16], dst_ip: [u8; 16], dport: u16, window: u16) -> Vec<u8> {
     let mut rng = rand::thread_rng();
     let mut tcp_header = TcpHeader {
-        sport: rng.gen_range(49152..65535).to_be(),
+        sport: rng.gen_range(49152..=65535u16).to_be(),
         dport: dport.to_be(),
         seq: rng.gen::<u32>().to_be(),
         ack: 0, off_res: 0x50, flags: 0x02, win: window.to_be(), csum: 0, urp: 0,
