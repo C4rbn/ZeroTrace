@@ -1,46 +1,73 @@
 #!/bin/bash
-set -e 
+set -e
 
-echo -e "\x1b[36m--- [1/4] System & Dependency Sync ---\x1b[0m"
+# ZeroTrace Industrial Setup Script
+# Target: x86_64 Linux (Kernel 5.4+)
 
-sudo apt-get update
+export DEBIAN_FRONTEND=noninteractive
+
+# Colors for status reporting
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+echo -e "${CYAN}--- [1/3] Environment Validation & Dependencies ---${NC}"
+
+# Ensure running on Linux
+if [[ "$OSTYPE" != "linux-gnu"* ]]; then
+    echo -e "${RED}[ERROR] ZeroTrace requires a Linux environment for XDP/eBPF.${NC}"
+    exit 1
+fi
+
+sudo apt-get update -y
 sudo apt-get install -y \
-    git build-essential pkg-config libssl-dev libelf-dev m4 \
-    curl cmake g++ linux-headers-$(uname -r) libc6-dev-i386 \
-    golang-go ninja-build libunwind-dev python3 \
-    clang llvm lld
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    libelf-dev \
+    clang \
+    llvm \
+    m4 \
+    curl \
+    linux-headers-$(uname -r) \
+    libunwind-dev \
+    bpftool
 
-echo -e "\x1b[36m--- [2/4] Rust Toolchain Setup ---\x1b[0m"
+echo -e "${CYAN}--- [2/3] Rust Toolchain Provisioning ---${NC}"
+
 if ! command -v rustup &> /dev/null; then
+    echo -e "${YELLOW}Rust not found. Installing...${NC}"
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 fi
 
 source "$HOME/.cargo/env" || true
 
-rustup toolchain install nightly --component rust-src
-cargo +nightly install bpf-linker || true
+# We use stable for the orchestrator, build.rs handles the BPF C compilation
+rustup toolchain install stable
+rustup default stable
 
-echo -e "\x1b[36m--- [3/4] Source Preparation ---\x1b[0m"
-mkdir -p third_party
-if [ ! -d "third_party/boring" ]; then
-    git clone --recursive https://github.com/cloudflare/boring.git third_party/boring
-fi
+echo -e "${CYAN}--- [3/3] Industrial Build & Deployment ---${NC}"
 
-echo -e "\x1b[36m--- [4/4] Compilation & Deployment ---\x1b[0m"
+# Clean old artifacts if they exist
+cargo clean
 
-echo -e "\x1b[33mCompiling XDP Interceptor...\x1b[0m"
-cd src/xdp-interceptor
-cargo +nightly build --release --target bpfel-unknown-none -Z build-std=core
-cd ../..
-
-echo -e "\x1b[33mCompiling Orchestrator...\x1b[0m"
-BORING_BSSL_NO_ASM=1 cargo build --release
+echo -e "${YELLOW}Compiling ZeroTrace Engine...${NC}"
+# build.rs will automatically invoke clang to compile src/xdp-interceptor/interceptor.bpf.c
+cargo build --release
 
 if [ -f "target/release/zerotrace" ]; then
+    # Link to /usr/local/bin for global access
     sudo ln -sf "$(pwd)/target/release/zerotrace" /usr/local/bin/zerotrace
-    echo -e "\n\x1b[32m[SUCCESS] ZeroTrace Linked Globally.\x1b[0m"
-    echo -e "\x1b[2mRun with: sudo zerotrace\x1b[0m"
+    
+    # Grant net_admin capabilities so it can manage XDP/Raw Sockets
+    sudo setcap cap_net_admin,cap_net_raw,cap_ipc_lock+ep "$(pwd)/target/release/zerotrace"
+    
+    echo -e "\n${GREEN}[SUCCESS] ZeroTrace binary deployed to /usr/local/bin/zerotrace${NC}"
+    echo -e "${GREEN}[SUCCESS] Capabilities granted. Run without full sudo if preferred.${NC}"
+    echo -e "\n${YELLOW}Usage: zerotrace --quiet${NC}"
 else
-    echo -e "\n\x1b[31m[ERROR] Build failed. Binary not found.\x1b[0m"
+    echo -e "\n${RED}[ERROR] Build failed. Check clang/rustc output above.${NC}"
     exit 1
 fi
