@@ -11,15 +11,20 @@ fn main() {
     let status = Command::new("clang")
         .args([
             "-O2",
-            "-target", "bpf",
+            "-target",
+            "bpf",
             "-D__TARGET_ARCH_x86",
-            "-c", "src/xdp-interceptor/interceptor.bpf.c",
-            "-o", out_path.to_str().unwrap(),
+            "-I/usr/include",
+            "-I/usr/include/x86_64-linux-gnu",
+            "-c",
+            "src/xdp-interceptor/interceptor.bpf.c",
+            "-o",
+            out_path.to_str().unwrap(),
         ])
         .status()
-        .expect("Failed to execute clang. Ensure clang is installed and in PATH.");
+        .expect("Clang execution failed");
 
     if !status.success() {
-        panic!("Clang failed to compile the BPF program.");
+        panic!("BPF compilation failed");
     }
 }
