@@ -5,26 +5,20 @@ use std::process::Command;
 fn main() {
     let out_dir = env::var("OUT_DIR").unwrap();
     let out_path = PathBuf::from(out_dir).join("interceptor.o");
-
     println!("cargo:rerun-if-changed=src/xdp-interceptor/interceptor.bpf.c");
-
     let status = Command::new("clang")
         .args([
             "-O2",
-            "-target",
-            "bpf",
+            "-target", "bpf",
             "-D__TARGET_ARCH_x86",
             "-I/usr/include",
             "-I/usr/include/x86_64-linux-gnu",
-            "-c",
-            "src/xdp-interceptor/interceptor.bpf.c",
-            "-o",
-            out_path.to_str().unwrap(),
+            "-c", "src/xdp-interceptor/interceptor.bpf.c",
+            "-o", out_path.to_str().unwrap(),
         ])
         .status()
-        .expect("Clang execution failed");
-
+        .expect("BPF Core Failure");
     if !status.success() {
-        panic!("BPF compilation failed");
+        panic!("Clang BPF compilation failed");
     }
 }
