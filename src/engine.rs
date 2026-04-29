@@ -3,7 +3,6 @@ use std::net::Ipv4Addr;
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use std::thread::sleep;
 use anyhow::{Result, anyhow};
-use colored::Colorize;
 use rand::Rng;
 
 use crate::tcp_syn_crafter;
@@ -35,7 +34,7 @@ impl StealthEngine {
         sleep(Duration::from_nanos(target_delay));
 
         let packet_cfg = tcp_syn_crafter::Config {
-            src_ip: [0, 0, 0, 0], // Kernel will fill the correct source IP
+            src_ip: [0, 0, 0, 0], 
             dst_ip: dynamic_ip.octets(),
             dport: 443,
             window: 64240,
@@ -58,15 +57,14 @@ pub fn log_event(status: &str, message: &str, quiet: bool) {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
     let timestamp = now.as_secs();
 
-    // OpenVPN-style professional status mapping
-    let status_styled = match status {
-        "BOOT"    => "INITIALIZING".cyan().bold(),
-        "BYPASS"  => "TUN:UP".magenta(),
-        "SHIELD"  => "PROTECT".green(),
-        "CRIT"    => "ERROR".red().bold(),
-        "EXIT"    => "SIGTERM".yellow(),
-        _         => status.normal(),
+    let status_text = match status {
+        "BOOT"    => "INITIALIZING",
+        "BYPASS"  => "TUN:UP",
+        "SHIELD"  => "PROTECT",
+        "CRIT"    => "ERROR",
+        "EXIT"    => "SIGTERM",
+        _         => status,
     };
 
-    println!("{:>10} [{}] {}", timestamp, status_styled, message);
+    println!("{:>10} [{}] {}", timestamp, status_text, message);
 }
