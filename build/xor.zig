@@ -1,7 +1,7 @@
 const std = @import("std");
 
 pub fn main(init: std.process.Init) !void {
-    const allocator = init.arena;
+    const allocator = init.arena.allocator();
     var args = try init.minimal.args.iterateAllocator(allocator);
 
     _ = args.next(); 
