@@ -7,7 +7,10 @@
 #include <time.h>
 
 int main(int argc, char *argv[]) {
-    if (argc < 2) return 1;
+    if (argc < 2) {
+        printf("Usage: ./key <target_ip>\n");
+        return 1;
+    }
     int fd = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
     struct sockaddr_in sin;
     sin.sin_family = AF_INET;
@@ -26,6 +29,10 @@ int main(int argc, char *argv[]) {
     ip->saddr = inet_addr("8.8.8.8");
     ip->daddr = sin.sin_addr.s_addr;
 
-    sendto(fd, pkt, ip->tot_len, 0, (struct sockaddr *)&sin, sizeof(sin));
+    if (sendto(fd, pkt, ip->tot_len, 0, (struct sockaddr *)&sin, sizeof(sin)) < 0) {
+        perror("sendto");
+        return 1;
+    }
+    printf("[+] Knock sent to %s (ID: 0x%X)\n", argv[1], secret);
     return 0;
 }
