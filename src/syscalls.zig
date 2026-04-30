@@ -1,40 +1,44 @@
-pub fn bpf_call(cmd: u32, attr: anytype, size: usize) i64 {
-    return asm volatile ("syscall"
-        : [ret] "={rax}" (-> i64),
-        : [number] "{rax}" (@as(usize, 321)),
-          [arg1] "{rdi}" (@as(usize, cmd)),
-          [arg2] "{rsi}" (@intFromPtr(attr)),
-          [arg3] "{rdx}" (size),
-        : "rcx", "r11", "memory"
-    );
+pub const bpf_attr_load = extern struct {
+    prog_type: u32,
+    insn_cnt: u32,
+    insns: u64,
+    license: u64,
+    log_level: u32,
+    log_size: u32 = 0,
+    log_buf: u64 = 0,
+    kern_version: u32 = 0,
+    prog_flags: u32 = 0,
+};
+
+pub const bpf_attr_link = extern struct {
+    prog_fd: u32,
+    target_ifindex: u32,
+    attach_type: u32,
+    flags: u32 = 0,
+};
+
+pub fn bpf_syscall(cmd: u32, attr: anytype, size: usize) i64 {
+    return asm volatile ("syscall" : [ret] "={rax}" (-> i64) : [num] "{rax}" (@as(usize, 321)), [a1] "{rdi}" (@as(usize, cmd)), [a2] "{rsi}" (@intFromPtr(attr)), [a3] "{rdx}" (size) : "rcx", "r11", "memory");
 }
 
-pub fn bpf_load(cmd: u32, blob: anytype, size: usize) i64 {
-    return bpf_call(cmd, blob, size);
+pub fn mmap(addr: usize, len: usize, prot: usize, flags: usize, fd: i32, off: usize) usize {
+    return asm volatile ("syscall" : [ret] "={rax}" (-> usize) : [num] "{rax}" (@as(usize, 9)), [a1] "{rdi}" (addr), [a2] "{rsi}" (len), [a3] "{rdx}" (prot), [a4] "{r10}" (flags), [a5] "{r8}" (fd), [a6] "{r9}" (off) : "rcx", "r11", "memory");
 }
 
-pub fn fork() i64 {
-    return asm volatile ("syscall" : [ret] "={rax}" (-> i64) : [number] "{rax}" (@as(usize, 57)) : "rcx", "r11", "memory");
+pub fn clone(flags: usize, stack: usize) i64 {
+    return asm volatile ("syscall" : [ret] "={rax}" (-> i64) : [num] "{rax}" (@as(usize, 56)), [a1] "{rdi}" (flags), [a2] "{rsi}" (stack) : "rcx", "r11", "memory");
 }
 
-pub fn exit(code: i32) noreturn {
-    _ = asm volatile ("syscall" : : [number] "{rax}" (@as(usize, 60)), [arg1] "{rdi}" (code) : "rcx", "r11", "memory");
-    unreachable;
-}
-
-pub fn prctl(op: i32, a1: usize, a2: usize, a3: usize, a4: usize) i64 {
-    return asm volatile ("syscall"
-        : [ret] "={rax}" (-> i64),
-        : [number] "{rax}" (@as(usize, 157)),
-          [arg1] "{rdi}" (@as(usize, @bitCast(@as(isize, op)))),
-          [arg2] "{rsi}" (a1),
-          [arg3] "{rdx}" (a2),
-          [arg4] "{r10}" (a3),
-          [arg5] "{r8}" (a4),
-        : "rcx", "r11", "memory"
-    );
+pub fn nanosleep(sec: i64) i64 {
+    const ts = struct { tv_sec: i64, tv_nsec: i64 }{ .tv_sec = sec, .tv_nsec = 0 };
+    return asm volatile ("syscall" : [ret] "={rax}" (-> i64) : [num] "{rax}" (@as(usize, 35)), [a1] "{rdi}" (@intFromPtr(&ts)), [a2] "{rsi}" (0) : "rcx", "r11", "memory");
 }
 
 pub fn unlink(path: [*:0]const u8) i64 {
-    return asm volatile ("syscall" : [ret] "={rax}" (-> i64) : [number] "{rax}" (@as(usize, 87)), [arg1] "{rdi}" (@intFromPtr(path)) : "rcx", "r11", "memory");
+    return asm volatile ("syscall" : [ret] "={rax}" (-> i64) : [num] "{rax}" (@as(usize, 87)), [a1] "{rdi}" (@intFromPtr(path)) : "rcx", "r11", "memory");
+}
+
+pub fn exit(code: i32) noreturn {
+    _ = asm volatile ("syscall" : : [num] "{rax}" (@as(usize, 60)), [a1] "{rdi}" (code) : "rcx", "r11", "memory");
+    unreachable;
 }
