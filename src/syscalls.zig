@@ -1,7 +1,12 @@
 const std = @import("std");
-const linux = std.os.linux;
 
-// Industrial BPF Attribute Structures
+pub const linux_dirent = struct {
+    d_ino: u64,
+    d_off: u64,
+    d_reclen: u16,
+    d_name: [256]u8,
+};
+
 pub const bpf_attr_load = extern struct {
     prog_type: u32,
     insn_cnt: u32,
@@ -12,77 +17,63 @@ pub const bpf_attr_load = extern struct {
     log_buf: u64 = 0,
     kern_version: u32 = 0,
     prog_flags: u32 = 0,
-    r: [80]u8 = [_]u8{0} ** 80,
 };
 
-pub const bpf_attr_map = extern struct {
-    map_type: u32,
-    key_size: u32,
-    value_size: u32,
-    max_entries: u32,
-    map_flags: u32 = 0,
-    inner_map_fd: u32 = 0,
-    numa_node: u32 = 0,
-    map_name: [16]u8 = [_]u8{0} ** 16,
-    map_ifindex: u32 = 0,
-    btf_fd: u32 = 0,
-    btf_key_type_id: u32 = 0,
-    btf_value_type_id: u32 = 0,
+pub const bpf_attr_map_op = extern struct {
+    map_fd: u32,
+    key: u64,
+    value: u64,
+    flags: u64 = 0,
 };
 
 pub const bpf_attr_link = extern struct {
     prog_fd: u32,
     target_ifindex: u32,
     attach_type: u32,
-    flags: u32 = 0,
-    r: [48]u8 = [_]u8{0} ** 48,
+    flags: u32,
 };
 
-pub const bpf_attr_pin = extern struct {
-    path: u64,
-    fd: u32,
-    flags: u32 = 0,
-};
-
-// Industrial Wrappers using the Zig Syscall Engine
-pub fn bpf_syscall(cmd: u32, attr: anytype, size: usize) i64 {
-    return @as(i64, @bitCast(linux.syscall3(.bpf, cmd, @intFromPtr(attr), size)));
+// Generic Syscall Wrappers
+pub fn syscall1(num: usize, arg1: usize) usize {
+    return asm volatile ("syscall" : [ret] "={rax}" (-> usize) : [num] "{rax}" (num), [arg1] "{rdi}" (arg1) : "rcx", "r11", "memory");
 }
 
-pub fn open(p: [*:0]const u8, f: i32) i64 {
-    return @as(i64, @bitCast(linux.syscall2(.open, @intFromPtr(p), @as(usize, @bitCast(@as(isize, f))))));
+pub fn syscall3(num: usize, a1: usize, a2: usize, a3: usize) usize {
+    return asm volatile ("syscall" : [ret] "={rax}" (-> usize) : [num] "{rax}" (num), [a1] "{rdi}" (a1), [a2] "{rsi}" (a2), [a3] "{rdx}" (a3) : "rcx", "r11", "memory");
 }
 
-pub fn read(fd: i32, b: []u8, l: usize) i64 {
-    return @as(i64, @bitCast(linux.syscall3(.read, @as(usize, @bitCast(@as(isize, fd))), @intFromPtr(b.ptr), l)));
+pub fn bpf_syscall(cmd: u32, attr: anyptr, size: u32) i64 {
+    return @intCast(syscall3(321, @intCast(cmd), @intFromPtr(attr), @intCast(size)));
 }
 
-pub fn close(fd: i32) i64 {
-    return @as(i64, @bitCast(linux.syscall1(.close, @as(usize, @bitCast(@as(isize, fd))))));
+pub fn open(path: [*:0]const u8, flags: i32) i32 { return @intCast(syscall3(2, @intFromPtr(path), @intCast(flags), 0)); }
+pub fn read(fd: i32, buf: [*]u8, len: usize) usize { return syscall3(0, @intCast(fd), @intFromPtr(buf), len); }
+pub fn close(fd: i32) void { _ = syscall1(3, @intCast(fd)); }
+pub fn mkdir(path: [*:0]const u8, mode: u32) i32 { return @intCast(syscall3(83, @intFromPtr(path), @intCast(mode), 0)); }
+pub fn unlink(path: [*:0]const u8) i32 { return @intCast(syscall1(87, @intFromPtr(path))); }
+pub fn exit(code: u32) noreturn { _ = syscall1(60, @intCast(code)); while (true) {} }
+
+pub fn prctl(option: i32, arg2: usize, arg3: usize, arg4: usize, arg5: usize) i64 {
+    return @intCast(asm volatile ("syscall" : [ret] "={rax}" (-> usize) : [num] "{rax}" (157), [a1] "{rdi}" (@intCast(option)), [a2] "{rsi}" (arg2), [a3] "{rdx}" (arg3), [a4] "{r10}" (arg4), [a5] "{r8}" (arg5) : "rcx", "r11", "memory"));
 }
 
-pub fn mmap(a: usize, l: usize, p: usize, f: usize, fd: i32, o: usize) usize {
-    return linux.syscall6(.mmap, a, l, p, f, @as(usize, @bitCast(@as(isize, fd))), o);
+pub fn mount(src: ?[*]const u8, tgt: [*]const u8, typ: ?[*]const u8, fl: usize, data: ?*anyopaque) i64 {
+    return @intCast(asm volatile ("syscall" : [ret] "={rax}" (-> usize) : [num] "{rax}" (165), [a1] "{rdi}" (@intFromPtr(src)), [a2] "{rsi}" (@intFromPtr(tgt)), [a3] "{rdx}" (@intFromPtr(typ)), [a4] "{r10}" (fl), [a5] "{r8}" (@intFromPtr(data)) : "rcx", "r11", "memory"));
 }
 
-pub fn clone(f: usize, s: usize) i64 {
-    return @as(i64, @bitCast(linux.syscall2(.clone, f, s)));
+pub fn utimensat(dirfd: i32, path: [*:0]const u8, times: *const [4]i64, flags: i32) i64 {
+    return @intCast(asm volatile ("syscall" : [ret] "={rax}" (-> usize) : [num] "{rax}" (280), [a1] "{rdi}" (@intCast(dirfd)), [a2] "{rsi}" (@intFromPtr(path)), [a3] "{rdx}" (@intFromPtr(times)), [a4] "{r10}" (@intCast(flags)) : "rcx", "r11", "memory"));
 }
 
-pub fn nanosleep(s: i64) i64 {
-    const ts = linux.timespec{ .tv_sec = s, .tv_nsec = 0 };
-    return @as(i64, @bitCast(linux.syscall2(.nanosleep, @intFromPtr(&ts), 0)));
+pub fn getdents(fd: i32, buf: [*]u8, count: usize) usize {
+    return syscall3(78, @intCast(fd), @intFromPtr(buf), count);
 }
 
-pub fn unlink(p: [*:0]const u8) i64 {
-    return @as(i64, @bitCast(linux.syscall1(.unlink, @intFromPtr(p))));
+pub fn nanosleep(seconds: i64) void {
+    const ts = [2]i64{ seconds, 0 };
+    _ = syscall3(35, @intFromPtr(&ts), 0, 0);
 }
 
-pub fn mkdir(p: [*:0]const u8, m: u32) i64 {
-    return @as(i64, @bitCast(linux.syscall2(.mkdir, @intFromPtr(p), m)));
-}
-
-pub fn exit(c: i32) noreturn {
-    _ = linux.syscall1(.exit, @as(usize, @bitCast(@as(isize, c))));
-    unreachable;
+pub fn prlimit(pid: i32, resource: i32, new_limit: ?*const [2]u64, old_limit: ?*[2]u64) i32 {
+    return @intCast(asm volatile ("syscall" : [ret] "={rax}" (-> usize) : [num] "{rax}" (302), [a1] "{rdi}" (@intCast(pid)), [a2] "{rsi}" (@intCast(resource)), [a3] "{rdx}" (@intFromPtr(new_limit)), [a4] "{r10}" (@intFromPtr(old_limit)) : "rcx", "r11", "memory"));
 }
