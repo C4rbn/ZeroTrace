@@ -33,7 +33,6 @@ pub const bpf_attr_link = extern struct {
     flags: u32,
 };
 
-// Generic Syscall Wrappers
 pub fn syscall1(num: usize, arg1: usize) usize {
     return asm volatile ("syscall" : [ret] "={rax}" (-> usize) : [num] "{rax}" (num), [arg1] "{rdi}" (arg1) : "rcx", "r11", "memory");
 }
@@ -42,7 +41,7 @@ pub fn syscall3(num: usize, a1: usize, a2: usize, a3: usize) usize {
     return asm volatile ("syscall" : [ret] "={rax}" (-> usize) : [num] "{rax}" (num), [a1] "{rdi}" (a1), [a2] "{rsi}" (a2), [a3] "{rdx}" (a3) : "rcx", "r11", "memory");
 }
 
-pub fn bpf_syscall(cmd: u32, attr: anyptr, size: u32) i64 {
+pub fn bpf_syscall(cmd: u32, attr: *const anyopaque, size: u32) i64 {
     return @intCast(syscall3(321, @intCast(cmd), @intFromPtr(attr), @intCast(size)));
 }
 
@@ -72,8 +71,4 @@ pub fn getdents(fd: i32, buf: [*]u8, count: usize) usize {
 pub fn nanosleep(seconds: i64) void {
     const ts = [2]i64{ seconds, 0 };
     _ = syscall3(35, @intFromPtr(&ts), 0, 0);
-}
-
-pub fn prlimit(pid: i32, resource: i32, new_limit: ?*const [2]u64, old_limit: ?*[2]u64) i32 {
-    return @intCast(asm volatile ("syscall" : [ret] "={rax}" (-> usize) : [num] "{rax}" (302), [a1] "{rdi}" (@intCast(pid)), [a2] "{rsi}" (@intCast(resource)), [a3] "{rdx}" (@intFromPtr(new_limit)), [a4] "{r10}" (@intFromPtr(old_limit)) : "rcx", "r11", "memory"));
 }
