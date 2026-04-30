@@ -15,14 +15,14 @@ injector:
 		-O ReleaseSmall \
 		-fstrip \
 		--name zt
-	mv zt target/
+	@mv zt target/
 
 key:
 	$(CC) -O3 src/key.c -DSEED=0x$(SEED) -o target/key
-	strip target/key
+	@strip target/key
 
 clean_obj:
-	rm -f target/ghost.o
+	@rm -f target/ghost.o
 
 clean:
 	rm -rf target
