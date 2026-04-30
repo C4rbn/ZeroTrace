@@ -4,6 +4,7 @@
 #include <linux/ip.h>
 #include <linux/ipv6.h>
 #include <linux/udp.h>
+#include <linux/in.h>      // <-- Added this for IPPROTO_UDP
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 
