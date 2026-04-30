@@ -1,6 +1,5 @@
 CC = clang
 ZIG = zig
-# Generate a single seed for the entire build session
 SESSION_SEED = $(shell head -c 4 /dev/urandom | xxd -p)
 
 .PHONY: all bpf injector key clean_obj clean
@@ -15,6 +14,7 @@ bpf:
 injector:
 	$(ZIG) build-exe src/main.zig \
 		-target x86_64-linux-musl \
+		-ffreestanding \
 		-O ReleaseSmall \
 		-fstrip \
 		--name zt
