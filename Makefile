@@ -1,7 +1,7 @@
 CC = clang
 SEED = $(shell head -c 4 /dev/urandom | xxd -p)
-# Added -lelf for guaranteed ELF parsing
-CFLAGS = -O3 -Wall -DSEED_VAL=0x$(SEED) -lelf -static
+# Added -lz and -lzstd to resolve the compression references in libelf
+CFLAGS = -O3 -Wall -DSEED_VAL=0x$(SEED) -static -lelf -lz -lzstd
 
 all: prep xor_tool bpf header loader clean_tmp
 
