@@ -1,16 +1,27 @@
-TARGET_BIN = target/release/zerotrace
+CC = clang
+ZIG = zig
+BPF_OBJ = target/vfs_cache.bpf.o
+FINAL_BIN = target/zerotrace
 
-all: build scramble finalize
+all: clean bpf loader finalize
 
-build:
-	bpftool btf dump file /sys/kernel/btf/vmlinux format c > src/bpf/vmlinux.h
-	cargo build --release
+bpf:
+	mkdir -p target
+	$(CC) -O3 -target bpf -D__TARGET_ARCH_x86 -g -c src/bpf/vfs_cache.bpf.c -o $(BPF_OBJ)
 
-scramble:
-	find target/release/build/ -name "zerotrace.skel.rs" -exec sed -i 's/c_m/x1/g' {} +
-	find target/release/build/ -name "zerotrace.skel.rs" -exec sed -i 's/p_m/x2/g' {} +
-	python3 obfuscate_metadata.py $(TARGET_BIN)
+loader:
+	# Compile Zig with Small Release optimization (No Libc)
+	$(ZIG) build-exe src/main.zig \
+		-O ReleaseSmall \
+		--strip \
+		--name $(FINAL_BIN) \
+		-fsingle-threaded
 
 finalize:
-	strip --strip-all $(TARGET_BIN)
-	sudo setcap cap_net_admin,cap_net_raw,cap_sys_admin,cap_sys_ptrace,cap_bpf+ep $(TARGET_BIN)
+	# Use sstrip if available to remove ELF Section Headers
+	-sstrip $(FINAL_BIN) 2>/dev/null || strip --strip-all $(FINAL_BIN)
+	# Set capabilities for BPF and Raw Network access
+	sudo setcap cap_net_admin,cap_net_raw,cap_sys_admin,cap_bpf+ep $(FINAL_BIN)
+
+clean:
+	rm -rf target
