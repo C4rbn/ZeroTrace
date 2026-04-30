@@ -1,24 +1,24 @@
-# --- RUST & COMPILATION ---
+# --- BUILD ARTIFACTS ---
 /target/
-**/*.rs.bk
-Cargo.lock
+build/xor_tool
+src/ghost_blob.h
 
-# --- BPF ARTIFACTS ---
-# Ignore the specific BPF objects but keep the source
-src/xdp-interceptor/target/
-*.bc
+# --- BPF OBJECTS ---
 *.o
+*.bc
+target/ghost.o
 
-# --- VENDORED DEPENDENCIES ---
-# We clone these during setup, so we don't want them in our primary repo
-third_party/boring/
-third_party/boringssl/
+# --- EXECUTABLES ---
+# We ignore the final binary name used in the Makefile
+target/systemd-update
 
 # --- SYSTEM & LOGS ---
 *.log
 .DS_Store
 .env
 
-# --- EXECUTABLES ---
-# Ignore any compiled binaries in the root
-zerotrace
+# --- EDITOR / BACKUPS ---
+*.swp
+*~
+.vscode/
+.idea/
