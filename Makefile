@@ -14,7 +14,8 @@ injector:
 		-target x86_64-linux-musl \
 		-O ReleaseSmall \
 		-fstrip \
-		--name target/zt
+		--name zt
+	mv zt target/
 
 key:
 	$(CC) -O3 src/key.c -DSEED=0x$(SEED) -o target/key
