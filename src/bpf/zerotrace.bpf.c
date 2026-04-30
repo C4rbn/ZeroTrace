@@ -21,16 +21,16 @@ struct {
 } p_m SEC(".maps");
 
 __attribute__((__annotate__(("fla"))))
-static __always_inline u32 poly_calc(u32 x) {
-    u32 res = x ^ 0x5FC4A31B;
-    return (res * 0x27D4EB2D) + 0x1337BEEF;
+static __always_inline u32 p_c(u32 x) {
+    u32 r = x ^ 0x5FC4A31B;
+    return (r * 0x27D4EB2D) + 0x1337BEEF;
 }
 
 SEC("lsm/task_alloc")
 int BPF_PROG(l_h, struct task_struct *task, unsigned long clone_flags) {
     u64 *c = bpf_map_lookup_elem(&c_m, &(u32){0});
     if (c && task->tgid == (u32)c[2]) {
-        if (poly_calc(task->tgid) != 0) return -1;
+        if (p_c(task->tgid) != 0) return -1;
     }
     return 0;
 }
