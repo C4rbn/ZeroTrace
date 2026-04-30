@@ -1,10 +1,9 @@
 CC = clang
 ZIG = zig
 BPF_OBJ = target/ghost.o
-FINAL = target/zt
 SEED = $(shell head -c 4 /dev/urandom | xxd -p)
 
-all: clean bpf injector finalize
+all: clean bpf injector key finalize
 
 bpf:
 	mkdir -p target
@@ -12,18 +11,14 @@ bpf:
 	python3 -c "d=open('$(BPF_OBJ)','rb').read();open('$(BPF_OBJ)','wb').write(bytearray([b^0x7A for b in d]))"
 
 injector:
-	$(ZIG) build-exe src/main.zig \
-		-Dseed=0x$(SEED) \
-		-target x86_64-linux-musl \
-		-O ReleaseSmall \
-		--strip \
-		-fno-compiler-rt \
-		-fno-stack-check \
-		--name $(FINAL)
+	$(ZIG) build-exe src/main.zig -target x86_64-linux-musl -O ReleaseSmall --strip --name target/zt
+
+key:
+	$(CC) -O3 src/key.c -DSEED=0x$(SEED) -o target/key
 
 finalize:
-	strip --strip-all --remove-section=.comment --remove-section=.note $(FINAL)
-	# No setcap here; use sudo ./zt to execute
+	strip --strip-all target/zt
+	strip --strip-all target/key
 
 clean:
 	rm -rf target
