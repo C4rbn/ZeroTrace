@@ -2,8 +2,7 @@ CC = clang
 ZIG = zig
 SEED = $(shell head -c 4 /dev/urandom | xxd -p)
 
-CFLAGS = -O3 -target bpf -DSEED=0x$(SEED) -g0 -fno-ident \
-         -I/usr/include/x86_64-linux-gnu
+CFLAGS = -O3 -target bpf -DSEED=0x$(SEED) -g0 -fno-ident -I/usr/include/x86_64-linux-gnu
 
 all: bpf build clean_obj
 
@@ -20,12 +19,9 @@ build:
 		-O ReleaseSmall \
 		-fstrip \
 		-fsingle-threaded \
-		--name systemd-worker \
+		--name systemd-update \
 		--entry _start
-	@mv systemd-worker target/
+	@mv systemd-update target/
 
 clean_obj:
 	@rm -f target/ghost.o
-
-clean:
-	rm -rf target
