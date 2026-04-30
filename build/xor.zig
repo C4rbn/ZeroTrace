@@ -4,13 +4,15 @@ pub fn main(init: std.process.Init) !void {
     const allocator = init.arena.allocator();
     var args = try init.minimal.args.iterateAllocator(allocator);
 
-    _ = args.next(); 
+    _ = args.next(); // Skip program name
     const path = args.next() orelse return;
     const seed_str = args.next() orelse return;
     
     const seed = try std.fmt.parseInt(u32, if (std.mem.startsWith(u8, seed_str, "0x")) seed_str[2..] else seed_str, 16);
 
-    const file = try init.cwd.openFile(path, .{ .mode = .read_write });
+    // Manually create the CWD handle for Zig 0.16.0
+    const cwd = std.fs.Dir{ .fd = std.posix.AT.FDCWD };
+    const file = try cwd.openFile(path, .{ .mode = .read_write });
     defer file.close();
 
     const size = (try file.stat()).size;
