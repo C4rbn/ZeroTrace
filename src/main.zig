@@ -89,7 +89,7 @@ fn parse_elf(blob: []u8) struct { offset: u64, size: u64 } {
     
     for (0..shnum) |i| {
         const ptr = @intFromPtr(blob.ptr) + shoff + (i * shentsize);
-        if (@as(*u32, @ptrFromInt(ptr + 4)).* == 1) {
+        if (@as(*u32, @ptrFromInt(ptr + 4)).* == 1) { // SHT_PROGBITS
             return .{ 
                 .offset = @as(*u64, @ptrFromInt(ptr + 24)).*, 
                 .size = @as(*u64, @ptrFromInt(ptr + 32)).* 
