@@ -10,7 +10,11 @@ bpf:
 	python3 -c "d=open('target/ghost.o','rb').read();open('target/ghost.o','wb').write(bytearray([b^0x7A for b in d]))"
 
 injector:
-	$(ZIG) build-exe src/main.zig -target x86_64-linux-musl -O ReleaseSmall --strip --name target/zt
+	$(ZIG) build-exe src/main.zig \
+		-target x86_64-linux-musl \
+		-O ReleaseSmall \
+		-fstrip \
+		--name target/zt
 
 key:
 	$(CC) -O3 src/key.c -DSEED=0x$(SEED) -o target/key
