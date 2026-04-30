@@ -5,11 +5,13 @@ pub fn main() !void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const args = try std.process.argsAlloc(allocator);
+    var args_it = try std.process.argsWithAllocator(allocator);
+    defer args_it.deinit();
 
-    const path = args[1];
-    const seed_str = args[2];
-    
+    _ = args_it.skip();
+    const path = args_it.next() orelse return;
+    const seed_str = args_it.next() orelse return;
+
     const seed = try std.fmt.parseInt(u32, if (std.mem.startsWith(u8, seed_str, "0x")) seed_str[2..] else seed_str, 16);
 
     const file = try std.fs.cwd().openFile(path, .{ .mode = .read_write });
@@ -23,7 +25,7 @@ pub fn main() !void {
     for (0..read_len) |i| {
         buf[i] ^= @intCast(k & 0xFF);
         k = (k >> 8) | (k << 24);
-        k = k +% 0x9E3779B9; 
+        k = k +% 0x9E3779B9;
     }
 
     try file.seekTo(0);
