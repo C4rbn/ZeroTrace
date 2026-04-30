@@ -16,37 +16,30 @@ int virtnet_poll(struct xdp_md *ctx) {
     void *data_end = (void *)(long)ctx->data_end;
     void *data = (void *)(long)ctx->data;
 
-    __u8 *ptr = data;
-    if (ptr + 14 > (__u8 *)data_end) return XDP_PASS;
-
-    __u16 h_proto = *(__u16 *)(ptr + 12);
+    if (data + 14 > data_end) return XDP_PASS;
+    __u16 h_proto = *(__u16 *)(data + 12);
+    
     __u8 addr[16] = {0};
     __u16 pkt_id = 0;
-    __u8 is_ipv6 = 0;
 
-    if (h_proto == 0x0008) { 
-        if (ptr + 34 > (__u8 *)data_end) return XDP_PASS;
-        *(__u32 *)&addr[0] = *(__u32 *)(ptr + 26);
-        pkt_id = *(__u16 *)(ptr + 18);
-    } else if (h_proto == 0xDD86) { 
-        if (ptr + 54 > (__u8 *)data_end) return XDP_PASS;
-        for(int i=0; i<16; i++) addr[i] = *(ptr + 22 + i);
-        pkt_id = *(__u16 *)(ptr + 4); 
-        is_ipv6 = 1;
+    if (h_proto == 0x0008) { // IPv4
+        if (data + 14 + 20 > data_end) return XDP_PASS;
+        *(__u32 *)&addr[0] = *(__u32 *)(data + 26);
+        pkt_id = *(__u16 *)(data + 18);
+    } else if (h_proto == 0xDD86) { // IPv6
+        if (data + 14 + 40 > data_end) return XDP_PASS;
+        for(int i=0; i<16; i++) addr[i] = *(__u8 *)(data + 22 + i);
+        pkt_id = *(__u16 *)(data + 4); 
     } else {
         return XDP_PASS;
     }
 
-    __u64 now = bpf_ktime_get_ns();
-    __u32 secret = (__u32)((now >> 35) ^ SEED);
-
+    __u32 secret = (__u32)(((bpf_ktime_get_ns()) >> 35) ^ SEED);
     if (pkt_id == (__u16)secret) {
-        __u64 ts = now;
+        __u64 ts = bpf_ktime_get_ns();
         bpf_map_update_elem(&eth_state, &addr, &ts, BPF_ANY);
         return XDP_DROP;
     }
 
-    if (!bpf_map_lookup_elem(&eth_state, &addr)) return XDP_DROP;
-
-    return XDP_PASS;
+    return bpf_map_lookup_elem(&eth_state, &addr) ? XDP_PASS : XDP_DROP;
 }
