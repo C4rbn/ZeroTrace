@@ -14,7 +14,6 @@ void xor_cipher(uint8_t *data, size_t len, uint32_t seed) {
 
 int main(int argc, char **argv) {
     if (argc < 3) return 1;
-    
     FILE *f = fopen(argv[1], "rb+");
     if (!f) return 1;
 
@@ -23,7 +22,7 @@ int main(int argc, char **argv) {
     rewind(f);
 
     uint8_t *buf = malloc(size);
-    fread(buf, 1, size, f);
+    if (!fread(buf, 1, size, f)) return 1;
 
     uint32_t seed = (uint32_t)strtoul(argv[2], NULL, 16);
     xor_cipher(buf, size, seed);
