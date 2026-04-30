@@ -10,7 +10,7 @@ pub fn main(init: std.process.Init) !void {
     
     const seed = try std.fmt.parseInt(u32, if (std.mem.startsWith(u8, seed_str, "0x")) seed_str[2..] else seed_str, 16);
 
-    const file = try std.fs.cwd().openFile(path, .{ .mode = .read_write });
+    const file = try init.cwd.openFile(path, .{ .mode = .read_write });
     defer file.close();
 
     const size = (try file.stat()).size;
