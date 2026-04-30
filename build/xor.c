@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 
-void x_c(uint8_t *d, size_t l, uint32_t s) {
+void x(uint8_t *d, size_t l, uint32_t s) {
     uint32_t k = s;
     for (size_t i = 0; i < l; i++) {
         d[i] ^= (uint8_t)(k & 0xFF);
@@ -16,13 +16,13 @@ int main(int argc, char **argv) {
     FILE *f = fopen(argv[1], "rb+");
     if (!f) return 1;
     fseek(f, 0, SEEK_END);
-    size_t sz = ftell(f);
+    size_t s = ftell(f);
     rewind(f);
-    uint8_t *b = malloc(sz);
-    if (fread(b, 1, sz, f)) {
-        x_c(b, sz, (uint32_t)strtoul(argv[2], NULL, 16));
+    uint8_t *b = malloc(s);
+    if (fread(b, 1, s, f)) {
+        x(b, s, (uint32_t)strtoul(argv[2], NULL, 16));
         rewind(f);
-        fwrite(b, 1, sz, f);
+        fwrite(b, 1, s, f);
     }
     fclose(f);
     return 0;
