@@ -2,15 +2,16 @@ CC = clang
 SEED = $(shell head -c 4 /dev/urandom | xxd -p)
 CFLAGS = -O3 -Wall -DSEED_VAL=0x$(SEED) -static
 
-all: xor_tool bpf header loader clean_tmp
+all: prep xor_tool bpf header loader clean_tmp
+
+prep:
+	@mkdir -p target
 
 xor_tool:
 	gcc build/xor.c -o build/xor_tool
 
 bpf:
-	@mkdir -p target
 	$(CC) -O3 -target bpf -g -c src/bpf/ghost.c -o target/ghost.o
-	@# Strip unnecessary sections but KEEP .BTF for kernel compatibility
 	llvm-strip --strip-unneeded -R .comment target/ghost.o
 	./build/xor_tool target/ghost.o 0x$(SEED)
 
