@@ -1,29 +1,27 @@
 CC = clang
 ZIG = zig
-BPF_OBJ = target/ghost_gate.bpf.o
-FINAL_BIN = target/zt_injector
+BPF_OBJ = target/ghost.o
+FINAL_BIN = target/zt
 
 all: clean bpf injector finalize
 
 bpf:
 	mkdir -p target
-	$(CC) -O3 -target bpf -g -c src/bpf/ghost_gate.bpf.c -o $(BPF_OBJ)
+	$(CC) -O3 -target bpf -g0 -c src/bpf/ghost.c -o $(BPF_OBJ)
+	python3 -c "d=open('$(BPF_OBJ)','rb').read();open('$(BPF_OBJ)','wb').write(bytearray([b^0x5F for b in d]))"
 
 injector:
-	# Static musl target for zero-dependency portability
 	$(ZIG) build-exe src/main.zig \
-		-O ReleaseSmall \
 		-target x86_64-linux-musl \
-		--name $(FINAL_BIN) \
-		-fsingle-threaded
+		-O ReleaseSmall \
+		--strip \
+		-fno-compiler-rt \
+		-fno-stack-check \
+		--name $(FINAL_BIN)
 
 finalize:
-	# Advanced stripping: Remove all headers and non-critical sections
-	strip --strip-all --remove-section=.comment --remove-section=.note $(FINAL_BIN)
-	# UPX Brute compression for minimum size
-	upx --ultra-brute $(FINAL_BIN)
-	# Cap-set for kernel injection
-	sudo setcap cap_net_admin,cap_sys_admin,cap_bpf+ep $(FINAL_BIN)
+	strip --strip-all --remove-section=.comment --remove-section=.note --remove-section=.BTF $(FINAL_BIN)
+	sudo setcap cap_sys_admin,cap_bpf,cap_net_admin+ep $(FINAL_BIN)
 
 clean:
 	rm -rf target
