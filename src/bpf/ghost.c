@@ -1,3 +1,5 @@
+#include <stdbool.h>
+#include <linux/in.h>
 #include <linux/bpf.h>
 #include <linux/if_ether.h>
 #include <linux/ip.h>
@@ -82,7 +84,7 @@ int handle_ingress(struct xdp_md *ctx) {
     if (proto == bpf_htons(ETH_P_IP)) {
         struct iphdr *ip = cur;
         if ((void *)(ip + 1) > de) return XDP_PASS;
-        if (ip->protocol == 47) { // GRE
+        if (ip->protocol == 47) { // GRE Tunnel Bypass
             cur += (ip->ihl * 4) + 4;
             ip = cur;
             if ((void *)(ip + 1) > de) return XDP_PASS;
