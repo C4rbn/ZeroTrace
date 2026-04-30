@@ -15,10 +15,6 @@
 #include <dirent.h>
 #include "ghost_blob.h"
 
-#ifndef MFD_CLOEXEC
-#define MFD_CLOEXEC 0x0001U
-#endif
-
 static void x_c(uint8_t *d, size_t l) {
     uint32_t k = SEED_VAL;
     for (size_t i = 0; i < l; i++) {
@@ -48,6 +44,9 @@ int main(int argc, char **argv) {
 
     elf_version(EV_CURRENT);
     Elf *e = elf_memory((char *)buf, ghost_o_len);
+    size_t shstrndx;
+    elf_getshdrstrndx(e, &shstrndx);
+
     Elf_Scn *scn = NULL;
     struct bpf_insn *insns = NULL;
     size_t icnt = 0;
@@ -55,8 +54,8 @@ int main(int argc, char **argv) {
     while ((scn = elf_nextscn(e, scn)) != NULL) {
         GElf_Shdr sh;
         gelf_getshdr(scn, &sh);
-        char *name = elf_strptr(e, elf_getshdrstrndx(e), sh.sh_name);
-        if (!strcmp(name, "xdp")) {
+        char *name = elf_strptr(e, shstrndx, sh.sh_name);
+        if (name && !strcmp(name, "xdp")) {
             insns = (struct bpf_insn *)elf_getdata(scn, NULL)->d_buf;
             icnt = sh.sh_size / sizeof(struct bpf_insn);
         }
@@ -77,7 +76,7 @@ int main(int argc, char **argv) {
                 Elf_Data *symdata = elf_getdata(elf_getscn(e, sh.sh_link), NULL);
                 gelf_getsym(symdata, GELF_R_SYM(rel.r_info), &sym);
                 char *sname = elf_strptr(e, sh.sh_link + 1, sym.st_name);
-                if (off < icnt && insns[off].code == (BPF_LD | BPF_IMM | BPF_DW)) {
+                if (sname && off < icnt && insns[off].code == (BPF_LD | BPF_IMM | BPF_DW)) {
                     insns[off].src_reg = BPF_PSEUDO_MAP_FD;
                     insns[off].imm = strstr(sname, "cache") ? cf : kf;
                 }
