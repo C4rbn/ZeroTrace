@@ -23,7 +23,7 @@ injector:
 
 finalize:
 	strip --strip-all --remove-section=.comment --remove-section=.note $(FINAL)
-	sudo setcap cap_sys_admin,cap_bpf,cap_net_admin+ep $(FINAL)
+	# No setcap here; use sudo ./zt to execute
 
 clean:
 	rm -rf target
