@@ -1,38 +1,28 @@
 #include <stdio.h>
-#include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <netinet/ip.h>
+#include <unistd.h>
 #include <arpa/inet.h>
-#include <time.h>
+
+// Usage: ./key <target_ip> <port>
+// Ports: 1337 (Authorize), 65535 (Self-Destruct)
 
 int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        printf("Usage: ./key <target_ip>\n");
+    if (argc < 3) {
+        printf("Usage: %s <ip> <port>\n", argv[0]);
         return 1;
     }
-    int fd = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
-    struct sockaddr_in sin;
-    sin.sin_family = AF_INET;
-    sin.sin_addr.s_addr = inet_addr(argv[1]);
 
-    uint16_t secret = (uint16_t)((time(NULL) / 30) ^ SEED);
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    struct sockaddr_in target;
+    target.sin_family = AF_INET;
+    target.sin_port = htons(atoi(argv[2]));
+    target.sin_addr.s_addr = inet_addr(argv[1]);
 
-    char pkt[64];
-    struct iphdr *ip = (struct iphdr *)pkt;
-    memset(pkt, 0, 64);
-    ip->ihl = 5;
-    ip->version = 4;
-    ip->tot_len = sizeof(struct iphdr);
-    ip->id = htons(secret);
-    ip->protocol = IPPROTO_UDP;
-    ip->saddr = inet_addr("8.8.8.8");
-    ip->daddr = sin.sin_addr.s_addr;
+    const char *payload = "\xde\xad\xbe\xef"; // Dummy data
+    sendto(sock, payload, strlen(payload), 0, (struct sockaddr *)&target, sizeof(target));
 
-    if (sendto(fd, pkt, ip->tot_len, 0, (struct sockaddr *)&sin, sizeof(sin)) < 0) {
-        perror("sendto");
-        return 1;
-    }
-    printf("[+] Knock sent to %s (ID: 0x%X)\n", argv[1], secret);
+    printf("[+] Packet sent to %s:%s\n", argv[1], argv[2]);
+    close(sock);
     return 0;
 }
