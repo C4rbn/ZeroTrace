@@ -28,7 +28,7 @@ sudo apt update && sudo apt install clang llvm libelf-dev zlib1g-dev libzstd-dev
 ### 2. Build
 Every build utilizes a seed-based XOR obfuscator to randomize the BPF bytecode, ensuring no two binaries share the same signature.
 ```bash
-git clone https://github.com/your-repo/ZeroTrace.git
+git clone https://github.com/C4rbn/ZeroTrace.git
 cd ZeroTrace
 make
 ```
